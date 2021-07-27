@@ -33,16 +33,29 @@ import (
 
 var addr = flag.String("addr", "localhost:50052", "the address to connect to")
 
+// 客户端 keepalive
 var kacp = keepalive.ClientParameters{
-	Time:                10 * time.Second, // send pings every 10 seconds if there is no activity
-	Timeout:             time.Second,      // wait 1 second for ping ack before considering the connection dead
-	PermitWithoutStream: true,             // send pings even without active streams
+	// send pings every 10 seconds if there is no activity
+	// 如果没有 activity， 则每隔 10s 发送一个 ping 包
+	Time: 10 * time.Second,
+
+	// wait 1 second for ping ack before considering the connection dead
+	// 如果 ping ack 1s 之内未返回则认为连接已断开
+	Timeout: time.Second,
+
+	// send pings even without active streams
+	// 如果没有 active 的 stream， 是否允许发送 ping
+	PermitWithoutStream: true,
 }
 
 func main() {
 	flag.Parse()
 
-	conn, err := grpc.Dial(*addr, grpc.WithInsecure(), grpc.WithKeepaliveParams(kacp))
+	conn, err := grpc.Dial(*addr,
+		grpc.WithInsecure(),
+		grpc.WithKeepaliveParams(kacp), //
+	)
+
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
 	}

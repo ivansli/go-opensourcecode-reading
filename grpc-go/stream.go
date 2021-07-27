@@ -173,8 +173,10 @@ func newClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, meth
 			}
 		}()
 	}
+
 	// Provide an opportunity for the first RPC to see the first service config
 	// provided by the resolver.
+	//
 	if err := cc.waitForResolvedAddrs(ctx); err != nil {
 		return nil, err
 	}
@@ -196,8 +198,11 @@ func newClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, meth
 		if rpcConfig.Context != nil {
 			ctx = rpcConfig.Context
 		}
+
 		mc = rpcConfig.MethodConfig
 		onCommit = rpcConfig.OnCommitted
+
+		// 设置有拦截器
 		if rpcConfig.Interceptor != nil {
 			rpcInfo.Context = nil
 			ns := newStream
@@ -231,6 +236,7 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 	} else {
 		ctx, cancel = context.WithCancel(ctx)
 	}
+
 	defer func() {
 		if err != nil {
 			cancel()
@@ -242,6 +248,7 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 			return nil, toRPCErr(err)
 		}
 	}
+
 	c.maxSendMessageSize = getMaxSize(mc.MaxReqSize, c.maxSendMessageSize, defaultClientMaxSendMessageSize)
 	c.maxReceiveMessageSize = getMaxSize(mc.MaxRespSize, c.maxReceiveMessageSize, defaultClientMaxReceiveMessageSize)
 	if err := setCallInfoCodec(c); err != nil {

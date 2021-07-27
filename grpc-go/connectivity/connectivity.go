@@ -52,12 +52,20 @@ func (s State) String() string {
 const (
 	// Idle indicates the ClientConn is idle.
 	Idle State = iota
+
 	// Connecting indicates the ClientConn is connecting.
+	// 建立连接中
 	Connecting
+
 	// Ready indicates the ClientConn is ready for work.
+	// 就绪
 	Ready
+
 	// TransientFailure indicates the ClientConn has seen a failure but expects to recover.
+	// 表示ClientConn看到了一个失败，但预期会恢复。
 	TransientFailure
+
 	// Shutdown indicates the ClientConn has started shutting down.
+	// 表示ClientConn已开始关闭。
 	Shutdown
 )

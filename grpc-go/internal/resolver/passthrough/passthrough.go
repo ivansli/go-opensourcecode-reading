@@ -31,6 +31,8 @@ func (*passthroughBuilder) Build(target resolver.Target, cc resolver.ClientConn,
 		target: target,
 		cc:     cc,
 	}
+
+	// !!!
 	r.start()
 	return r, nil
 }
@@ -45,6 +47,8 @@ type passthroughResolver struct {
 }
 
 func (r *passthroughResolver) start() {
+	// !!! cc的UpdateState方法
+	// resolver_conn_wrapper.go文件中
 	r.cc.UpdateState(resolver.State{Addresses: []resolver.Address{{Addr: r.target.Endpoint}}})
 }
 
@@ -52,6 +56,7 @@ func (*passthroughResolver) ResolveNow(o resolver.ResolveNowOptions) {}
 
 func (*passthroughResolver) Close() {}
 
+// 注册 scheme 到 resolver builder
 func init() {
 	resolver.Register(&passthroughBuilder{})
 }

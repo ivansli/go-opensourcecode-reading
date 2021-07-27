@@ -37,6 +37,12 @@ const (
 
 var addrs = []string{"localhost:50051", "localhost:50052"}
 
+// 初始化就开始注册一个名称系统
+func init() {
+	// 注册一个名称系统
+	resolver.Register(&exampleResolverBuilder{})
+}
+
 func callUnaryEcho(c ecpb.EchoClient, message string) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -54,9 +60,13 @@ func makeRPCs(cc *grpc.ClientConn, n int) {
 	}
 }
 
+//scheme://authority/endpoint_name
+
 func main() {
 	// "pick_first" is the default, so there's no need to set the load balancer.
 	pickfirstConn, err := grpc.Dial(
+		// "unknown_scheme://authority/endpoint"
+		// 下面的设置，authority 缺失，所以看着是 ///
 		fmt.Sprintf("%s:///%s", exampleScheme, exampleServiceName),
 		grpc.WithInsecure(),
 		grpc.WithBlock(),
@@ -89,20 +99,40 @@ func main() {
 
 // Following is an example name resolver implementation. Read the name
 // resolution example to learn more about it.
-
+//
+// 下面是名称解析器实现的示例。请阅读名称解析示例以了解更多相关信息。
 type exampleResolverBuilder struct{}
+
+//
+// exampleResolverBuilder 实现了 Builder 接口
+//
+// type Builder interface {
+//    Build(target Target, cc ClientConn, opts BuildOptions) (Resolver, error)
+//    Scheme() string
+//}
+//
 
 func (*exampleResolverBuilder) Build(target resolver.Target, cc resolver.ClientConn, opts resolver.BuildOptions) (resolver.Resolver, error) {
 	r := &exampleResolver{
 		target: target,
 		cc:     cc,
 		addrsStore: map[string][]string{
-			exampleServiceName: addrs,
+			exampleServiceName: addrs, // exampleServiceName 包含 addrs 这些地址
 		},
 	}
+
 	r.start()
 	return r, nil
 }
+
+// 注册的时候 把该方法返回的名称注册到全局变量中
+//
+// 调用 resolver.Register(&exampleResolverBuilder{}) 时
+//
+// func Register(b Builder) {
+//	m[b.Scheme()] = b
+//}
+//
 func (*exampleResolverBuilder) Scheme() string { return exampleScheme }
 
 type exampleResolver struct {
@@ -119,9 +149,6 @@ func (r *exampleResolver) start() {
 	}
 	r.cc.UpdateState(resolver.State{Addresses: addrs})
 }
+
 func (*exampleResolver) ResolveNow(o resolver.ResolveNowOptions) {}
 func (*exampleResolver) Close()                                  {}
-
-func init() {
-	resolver.Register(&exampleResolverBuilder{})
-}

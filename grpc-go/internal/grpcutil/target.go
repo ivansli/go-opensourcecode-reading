@@ -65,6 +65,7 @@ func ParseTarget(target string, skipUnixColonParsing bool) (ret resolver.Target)
 		}
 		return ret
 	}
+
 	ret.Scheme, ret.Endpoint, ok = split2(target, "://")
 	if !ok {
 		if strings.HasPrefix(target, "unix:") && !skipUnixColonParsing {
@@ -76,10 +77,12 @@ func ParseTarget(target string, skipUnixColonParsing bool) (ret resolver.Target)
 		}
 		return resolver.Target{Endpoint: target}
 	}
+
 	ret.Authority, ret.Endpoint, ok = split2(ret.Endpoint, "/")
 	if !ok {
 		return resolver.Target{Endpoint: target}
 	}
+
 	if ret.Scheme == "unix" {
 		// Add the "/" back in the unix case, so the unix resolver receives the
 		// actual endpoint in the "unix://[/absolute/path]" case.

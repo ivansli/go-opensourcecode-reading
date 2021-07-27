@@ -563,6 +563,7 @@ func NewServer(opt ...ServerOption) *Server {
 	for _, o := range opt {
 		o.apply(&opts)
 	}
+
 	s := &Server{
 		lis:      make(map[net.Listener]bool),
 		opts:     opts,
@@ -590,6 +591,7 @@ func NewServer(opt ...ServerOption) *Server {
 	if channelz.IsOn() {
 		s.channelzID = channelz.RegisterServer(&channelzServer{s}, "")
 	}
+
 	return s
 }
 

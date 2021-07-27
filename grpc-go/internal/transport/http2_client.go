@@ -142,6 +142,7 @@ type http2Client struct {
 	connectionID uint64
 }
 
+// 进行连接的建立
 func dial(ctx context.Context, fn func(context.Context, string) (net.Conn, error), addr resolver.Address, useProxy bool, grpcUA string) (net.Conn, error) {
 	address := addr.Addr
 	networkType, ok := networktype.Get(addr)
@@ -162,6 +163,8 @@ func dial(ctx context.Context, fn func(context.Context, string) (net.Conn, error
 	if networkType == "tcp" && useProxy {
 		return proxyDial(ctx, address, grpcUA)
 	}
+
+	// 使用net包来捷星连接
 	return (&net.Dialer{}).DialContext(ctx, networkType, address)
 }
 
@@ -193,6 +196,7 @@ func newHTTP2Client(connectCtx, ctx context.Context, addr resolver.Address, opts
 		}
 	}()
 
+	// ！！！建立连接
 	conn, err := dial(connectCtx, opts.Dialer, addr, opts.UseProxy, opts.UserAgent)
 	if err != nil {
 		if opts.FailOnNonTempDialError {

@@ -144,6 +144,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		czData:            new(channelzData),
 		firstResolveEvent: grpcsync.NewEvent(),
 	}
+
 	cc.retryThrottler.Store((*retryThrottler)(nil))
 	cc.safeConfigSelector.UpdateConfigSelector(&defaultConfigSelector{nil})
 	cc.ctx, cc.cancel = context.WithCancel(context.Background())
@@ -210,8 +211,11 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		}
 		cc.dopts.defaultServiceConfig, _ = scpr.Config.(*ServiceConfig)
 	}
+
+	// KeepaliveParams
 	cc.mkp = cc.dopts.copts.KeepaliveParams
 
+	// ua 设置
 	if cc.dopts.copts.UserAgent != "" {
 		cc.dopts.copts.UserAgent += " " + grpcUA
 	} else {
@@ -254,18 +258,34 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		default:
 		}
 	}
+
 	if cc.dopts.bs == nil {
 		cc.dopts.bs = backoff.DefaultExponential
 	}
 
 	// Determine the resolver to use.
+	//
+	// "unknown_scheme://authority/endpoint"
 	cc.parsedTarget = grpcutil.ParseTarget(cc.target, cc.dopts.copts.Dialer != nil)
 	channelz.Infof(logger, cc.channelzID, "parsed scheme: %q", cc.parsedTarget.Scheme)
 
-	// getResolver 优先从DialOption中读取
-	// 其次中全局读取，DialOption可以通过 grpc.WithResolvers() 设置
+	// getResolver 优先从 DialOption 中读取
+	// 其次中全局读取，DialOption 可以通过 grpc.WithResolvers() 设置
 	// 全局的可以通过 resolver.Register(Builder) 注册,用法可参考 resolver/dns/dns_resolver.go
+	//
+	// 注册 若干 resolver
+	//
+	// 	_ "google.golang.org/grpc/balancer/roundrobin"           // To register roundrobin.
+	//	_ "google.golang.org/grpc/internal/resolver/dns"         // To register dns resolver.
+	//	_ "google.golang.org/grpc/internal/resolver/passthrough" // To register passthrough resolver.
+	//	_ "google.golang.org/grpc/internal/resolver/unix"        // To register unix resolver.
+	//
+	// 在本文件引入对应包的时候聚进行了初始化操作，其中包括 passthrough 注册到全局存储 resolver 对象的变量中
+	//
+
+	// 根据解析的Scheme来查找 resolver
 	resolverBuilder := cc.getResolver(cc.parsedTarget.Scheme)
+
 	if resolverBuilder == nil {
 		// If resolver builder is still nil, the parsed target's scheme is
 		// not registered. Fallback to default resolver and set Endpoint to
@@ -275,7 +295,11 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 			Scheme:   resolver.GetDefaultScheme(),
 			Endpoint: target,
 		}
+
+		// 走到这里会成功，因为文件头部引入了若干个包已经进行了初始化操作，已经进行了若干个注册
 		resolverBuilder = cc.getResolver(cc.parsedTarget.Scheme)
+
+		// 还没找到，则返回错误
 		if resolverBuilder == nil {
 			return nil, fmt.Errorf("could not get resolver for default scheme: %q", cc.parsedTarget.Scheme)
 		}
@@ -313,11 +337,11 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		go cc.scWatcher()
 	}
 
-
 	var credsClone credentials.TransportCredentials
 	if creds := cc.dopts.copts.TransportCredentials; creds != nil {
 		credsClone = creds.Clone()
 	}
+
 	cc.balancerBuildOpts = balancer.BuildOptions{
 		DialCreds:        credsClone,
 		CredsBundle:      cc.dopts.copts.CredsBundle,
@@ -328,6 +352,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	}
 
 	// Build the resolver.
+	// ！！！在 newCCResolverWrapper 中 异步创建连接（使用其他goroutine）
 	rWrapper, err := newCCResolverWrapper(cc, resolverBuilder)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build resolver: %v", err)
@@ -335,7 +360,6 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	cc.mu.Lock()
 	cc.resolverWrapper = rWrapper
 	cc.mu.Unlock()
-
 
 	// A blocking dial blocks until the clientConn is ready.
 	//
@@ -362,12 +386,14 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 			}
 
 			// 阻塞
-			// 直到状态发送变化(与当前的s不同就视为发生变化) 或者 超时
+			// 直到状态发送变化 (与当前的s不同就视为发生变化) 或者 超时
 			if !cc.WaitForStateChange(ctx, s) {
 				// ctx got timeout or canceled.
+				// 获取连接的错误信息
 				if err = cc.connectionError(); err != nil && cc.dopts.returnLastError {
 					return nil, err
 				}
+
 				return nil, ctx.Err()
 			}
 		}
@@ -440,9 +466,15 @@ func getChainStreamer(interceptors []StreamClientInterceptor, curr int, finalStr
 
 // connectivityStateManager keeps the connectivity.State of ClientConn.
 // This struct will eventually be exported so the balancers can access it.
+//
+// 保持 ClientConn 的 connectivity.State状态。
+// 这个结构体最终将被导出，以便平衡器可以访问它。
 type connectivityStateManager struct {
-	mu         sync.Mutex
-	state      connectivity.State
+	mu sync.Mutex
+	// 活跃的状态
+	state connectivity.State
+
+	// 通知的chan
 	notifyChan chan struct{}
 	channelzID int64
 }
@@ -450,17 +482,27 @@ type connectivityStateManager struct {
 // updateState updates the connectivity.State of ClientConn.
 // If there's a change it notifies goroutines waiting on state change to
 // happen.
+//
+// 更新状态，如果有变化，它会通知goroutines等待状态变化的发生。
+//
 func (csm *connectivityStateManager) updateState(state connectivity.State) {
 	csm.mu.Lock()
 	defer csm.mu.Unlock()
+
+	// 表示ClientConn已开始关闭
 	if csm.state == connectivity.Shutdown {
 		return
 	}
+
+	// 状态等于期待的 state 状态
 	if csm.state == state {
 		return
 	}
+
+	// 设置状态为 state
 	csm.state = state
 	channelz.Infof(logger, csm.channelzID, "Channel Connectivity change to %v", state)
+
 	if csm.notifyChan != nil {
 		// There are other goroutines waiting on this channel.
 		close(csm.notifyChan)
@@ -528,6 +570,7 @@ type ClientConn struct {
 	resolverWrapper *ccResolverWrapper
 	sc              *ServiceConfig
 	conns           map[*addrConn]struct{}
+
 	// Keepalive parameter can be updated if a GoAway is received.
 	mkp             keepalive.ClientParameters
 	curBalancerName string
@@ -550,14 +593,23 @@ type ClientConn struct {
 //
 // Notice: This API is EXPERIMENTAL and may be changed or removed in a
 // later release.
+//
+// 等待状态发送变化
+//
 func (cc *ClientConn) WaitForStateChange(ctx context.Context, sourceState connectivity.State) bool {
+	// 获取chan
 	ch := cc.csMgr.getNotifyChan()
+
+	// 获取状态 并判断是否等于 sourceState，则返回true
 	if cc.csMgr.getState() != sourceState {
 		return true
 	}
+
 	select {
+	// 超时 返回false
 	case <-ctx.Done():
 		return false
+	//	状态发生了变化 返回true
 	case <-ch:
 		return true
 	}
@@ -633,6 +685,7 @@ func (cc *ClientConn) maybeApplyDefaultServiceConfig(addrs []resolver.Address) {
 	}
 }
 
+// 更新状态
 func (cc *ClientConn) updateResolverState(s resolver.State, err error) error {
 	defer cc.firstResolveEvent.Fire()
 	cc.mu.Lock()
@@ -712,6 +765,8 @@ func (cc *ClientConn) updateResolverState(s resolver.State, err error) error {
 			i++
 		}
 	}
+
+	// ！！！更新conn状态
 	uccsErr := bw.updateClientConnState(&balancer.ClientConnState{ResolverState: s, BalancerConfig: balCfg})
 	if ret == nil {
 		ret = uccsErr // prefer ErrBadResolver state since any other error is
@@ -870,10 +925,14 @@ func (ac *addrConn) connect() error {
 	}
 	// Update connectivity state within the lock to prevent subsequent or
 	// concurrent calls from resetting the transport more than once.
+	//
+	// 更新连接状态为 连接中 connectivity.Connecting
 	ac.updateConnectivityState(connectivity.Connecting, nil)
 	ac.mu.Unlock()
 
 	// Start a goroutine connecting to the server asynchronously.
+	// ！！！启动一个异步连接到服务器的goroutine。
+	// 所以说 连接建立过程是异步的哦
 	go ac.resetTransport()
 	return nil
 }
@@ -1162,13 +1221,16 @@ func (ac *addrConn) adjustParams(r transport.GoAwayReason) {
 	}
 }
 
+// ！！！核心
 func (ac *addrConn) resetTransport() {
+	// 循环
 	for i := 0; ; i++ {
 		if i > 0 {
 			ac.cc.resolveNow(resolver.ResolveNowOptions{})
 		}
 
 		ac.mu.Lock()
+		// 状态显示已经关闭，则退出
 		if ac.state == connectivity.Shutdown {
 			ac.mu.Unlock()
 			return
@@ -1177,6 +1239,7 @@ func (ac *addrConn) resetTransport() {
 		addrs := ac.addrs
 		backoffFor := ac.dopts.bs.Backoff(ac.backoffIdx)
 		// This will be the duration that dial gets to finish.
+		// 最小的连接时间
 		dialDuration := minConnectTimeout
 		if ac.dopts.minConnectTimeout != nil {
 			dialDuration = ac.dopts.minConnectTimeout()
@@ -1194,10 +1257,12 @@ func (ac *addrConn) resetTransport() {
 		// https://github.com/grpc/grpc/blob/master/doc/connection-backoff.md#proposed-backoff-algorithm
 		connectDeadline := time.Now().Add(dialDuration)
 
+		// 更新状态
 		ac.updateConnectivityState(connectivity.Connecting, nil)
 		ac.transport = nil
 		ac.mu.Unlock()
 
+		// ！！！尝试所有的地址取建立连接
 		newTr, addr, reconnect, err := ac.tryAllAddrs(addrs, connectDeadline)
 		if err != nil {
 			// After exhausting all addresses, the addrConn enters
@@ -1207,6 +1272,8 @@ func (ac *addrConn) resetTransport() {
 				ac.mu.Unlock()
 				return
 			}
+
+			// 连接建立失败，更新状态
 			ac.updateConnectivityState(connectivity.TransientFailure, err)
 
 			// Backoff.
@@ -1239,6 +1306,7 @@ func (ac *addrConn) resetTransport() {
 		ac.backoffIdx = 0
 
 		hctx, hcancel := context.WithCancel(ac.ctx)
+		// ！！！启动新的goroutine进行健康检查
 		ac.startHealthCheck(hctx)
 		ac.mu.Unlock()
 
@@ -1262,6 +1330,9 @@ func (ac *addrConn) resetTransport() {
 // tryAllAddrs tries to creates a connection to the addresses, and stop when at the
 // first successful one. It returns the transport, the address and a Event in
 // the successful case. The Event fires when the returned transport disconnects.
+//
+// 尝试创建到这些地址的连接，并在第一个成功的连接时停止。
+// 在成功的情况下，它返回传输、地址和一个Event。当返回的传输断开连接时，事件将触发。
 func (ac *addrConn) tryAllAddrs(addrs []resolver.Address, connectDeadline time.Time) (transport.ClientTransport, resolver.Address, *grpcsync.Event, error) {
 	var firstConnErr error
 	for _, addr := range addrs {
@@ -1283,6 +1354,7 @@ func (ac *addrConn) tryAllAddrs(addrs []resolver.Address, connectDeadline time.T
 
 		channelz.Infof(logger, ac.channelzID, "Subchannel picks a new address %q to connect", addr.Addr)
 
+		// 建立连接
 		newTr, reconnect, err := ac.createTransport(addr, copts, connectDeadline)
 		if err == nil {
 			return newTr, addr, reconnect, nil
@@ -1290,6 +1362,7 @@ func (ac *addrConn) tryAllAddrs(addrs []resolver.Address, connectDeadline time.T
 		if firstConnErr == nil {
 			firstConnErr = err
 		}
+
 		ac.cc.updateConnectionError(err)
 	}
 
@@ -1300,6 +1373,9 @@ func (ac *addrConn) tryAllAddrs(addrs []resolver.Address, connectDeadline time.T
 // createTransport creates a connection to addr. It returns the transport and a
 // Event in the successful case. The Event fires when the returned transport
 // disconnects.
+//
+// 创建到addr的连接。它在成功的情况下返回传输和一个Event。当返回的传输断开连接时，事件将触发。
+//
 func (ac *addrConn) createTransport(addr resolver.Address, copts transport.ConnectOptions, connectDeadline time.Time) (transport.ClientTransport, *grpcsync.Event, error) {
 	prefaceReceived := make(chan struct{})
 	onCloseCalled := make(chan struct{})
@@ -1353,6 +1429,7 @@ func (ac *addrConn) createTransport(addr resolver.Address, copts transport.Conne
 		copts.ChannelzParentID = ac.channelzID
 	}
 
+	// ！！！在这里取进行连接操作
 	newTr, err := transport.NewClientTransport(connectCtx, ac.cc.ctx, addr, copts, onPrefaceReceipt, onGoAway, onClose)
 	if err != nil {
 		// newTr is either nil, or closed.

@@ -160,5 +160,6 @@ func (scs *SafeConfigSelector) UpdateConfigSelector(cs ConfigSelector) {
 func (scs *SafeConfigSelector) SelectConfig(r RPCInfo) (*RPCConfig, error) {
 	scs.mu.RLock()
 	defer scs.mu.RUnlock()
+
 	return scs.cs.SelectConfig(r)
 }

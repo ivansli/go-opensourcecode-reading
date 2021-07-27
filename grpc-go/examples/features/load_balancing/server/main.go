@@ -51,6 +51,7 @@ func startServer(addr string) {
 	}
 	s := grpc.NewServer()
 	pb.RegisterEchoServer(s, &ecServer{addr: addr})
+
 	log.Printf("serving on %s\n", addr)
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)

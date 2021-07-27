@@ -69,7 +69,12 @@ func newCCResolverWrapper(cc *ClientConn, rb resolver.Builder) (*ccResolverWrapp
 	// accessing ccr.resolver which is being assigned here.
 	ccr.resolverMu.Lock()
 	defer ccr.resolverMu.Unlock()
+
+	// 调用 resolver.Builder 的 Build 方法
+	// 以 passthrough internal/resolver/passthrough/passthrough.go 为例
+	// ！！！ rb.Build()
 	ccr.resolver, err = rb.Build(cc.parsedTarget, ccr, rbo)
+
 	if err != nil {
 		return nil, err
 	}
@@ -91,17 +96,22 @@ func (ccr *ccResolverWrapper) close() {
 	ccr.resolverMu.Unlock()
 }
 
+// ！！！更新状态，包含建立连接的逻辑
 func (ccr *ccResolverWrapper) UpdateState(s resolver.State) error {
 	ccr.incomingMu.Lock()
 	defer ccr.incomingMu.Unlock()
 	if ccr.done.HasFired() {
 		return nil
 	}
+
 	channelz.Infof(logger, ccr.cc.channelzID, "ccResolverWrapper: sending update to cc: %v", s)
+
 	if channelz.IsOn() {
 		ccr.addChannelzTraceEvent(s)
 	}
 	ccr.curState = s
+
+	// ！！！更新状态并建立连接
 	if err := ccr.cc.updateResolverState(ccr.curState, nil); err == balancer.ErrBadResolverState {
 		return balancer.ErrBadResolverState
 	}

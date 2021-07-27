@@ -570,6 +570,8 @@ type ConnectOptions struct {
 
 // NewClientTransport establishes the transport with the required ConnectOptions
 // and returns it to the caller.
+//
+// 使用所需的ConnectOptions建立传输，并将其返回给调用者。
 func NewClientTransport(connectCtx, ctx context.Context, addr resolver.Address, opts ConnectOptions, onPrefaceReceipt func(), onGoAway func(GoAwayReason), onClose func()) (ClientTransport, error) {
 	return newHTTP2Client(connectCtx, ctx, addr, opts, onPrefaceReceipt, onGoAway, onClose)
 }

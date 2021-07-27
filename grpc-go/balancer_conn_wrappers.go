@@ -139,6 +139,9 @@ func (ccb *ccBalancerWrapper) handleSubConnStateChange(sc balancer.SubConn, s co
 func (ccb *ccBalancerWrapper) updateClientConnState(ccs *balancer.ClientConnState) error {
 	ccb.balancerMu.Lock()
 	defer ccb.balancerMu.Unlock()
+
+	// ！！！更新conn状态，包含建立连接
+	// pickfirst.go 文件在
 	return ccb.balancer.UpdateClientConnState(*ccs)
 }
 
@@ -257,6 +260,8 @@ func (acbw *acBalancerWrapper) UpdateAddresses(addrs []resolver.Address) {
 func (acbw *acBalancerWrapper) Connect() {
 	acbw.mu.Lock()
 	defer acbw.mu.Unlock()
+
+	// ！！！建立连接
 	acbw.ac.connect()
 }
 
