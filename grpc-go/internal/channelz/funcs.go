@@ -21,6 +21,10 @@
 // metric struct formats.
 //
 // All APIs in this package are experimental.
+//
+// 包channelz定义了用于启用channelz服务、输入注册/删除和访问channelz数据的api。
+// 它还定义了channelz度量结构格式。
+// 这个包中的所有api都是实验性的。
 package channelz
 
 import (
@@ -55,6 +59,7 @@ func TurnOn() {
 }
 
 // IsOn returns whether channelz data collection is on.
+// 返回是否开启channelz数据收集。
 func IsOn() bool {
 	return atomic.CompareAndSwapInt32(&curState, 1, 1)
 }

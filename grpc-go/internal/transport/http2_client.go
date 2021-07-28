@@ -164,6 +164,9 @@ func dial(ctx context.Context, fn func(context.Context, string) (net.Conn, error
 		return proxyDial(ctx, address, grpcUA)
 	}
 
+	// 使用debug.trace 打印整个调用链
+	//debug.PrintStack()
+
 	// 使用net包来捷星连接
 	return (&net.Dialer{}).DialContext(ctx, networkType, address)
 }

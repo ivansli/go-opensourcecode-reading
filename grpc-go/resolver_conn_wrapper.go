@@ -72,7 +72,8 @@ func newCCResolverWrapper(cc *ClientConn, rb resolver.Builder) (*ccResolverWrapp
 
 	// 调用 resolver.Builder 的 Build 方法
 	// 以 passthrough internal/resolver/passthrough/passthrough.go 为例
-	// ！！！ rb.Build()
+	// ！！！核心
+	// rb.Build()
 	ccr.resolver, err = rb.Build(cc.parsedTarget, ccr, rbo)
 
 	if err != nil {
@@ -111,7 +112,8 @@ func (ccr *ccResolverWrapper) UpdateState(s resolver.State) error {
 	}
 	ccr.curState = s
 
-	// ！！！更新状态并建立连接
+	// ！！！核心
+	// 更新状态并建立连接
 	if err := ccr.cc.updateResolverState(ccr.curState, nil); err == balancer.ErrBadResolverState {
 		return balancer.ErrBadResolverState
 	}

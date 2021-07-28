@@ -85,7 +85,8 @@ func (b *pickfirstBalancer) UpdateClientConnState(cs balancer.ClientConnState) e
 
 		b.cc.UpdateState(balancer.State{ConnectivityState: connectivity.Idle, Picker: &picker{result: balancer.PickResult{SubConn: b.sc}}})
 
-		// !!! 创建连接conn
+		// !!!核心
+		// 创建连接conn
 		// balancer_conn_wrappers.go 文件中
 		b.sc.Connect()
 	} else {

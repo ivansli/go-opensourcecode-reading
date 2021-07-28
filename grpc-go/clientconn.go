@@ -163,6 +163,12 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		}
 	}()
 
+	// gRPC 提供了 Channelz 用于对外提供服务的数据，用于调试、监控等
+	// 根据服务的角色不同，可以提供的数据有：
+	// 	  服务端: Servers, Server, ServerSockets, Socket
+	// 	  客户端: TopChannels, Channel, Subchannel
+	//
+	// channelz 开启，则注册一些信息
 	if channelz.IsOn() {
 		if cc.dopts.channelzParentID != 0 {
 			cc.channelzID = channelz.RegisterChannel(&channelzChannel{cc}, cc.dopts.channelzParentID, target)
@@ -181,8 +187,9 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		cc.csMgr.channelzID = cc.channelzID
 	}
 
+	// dialOption 设置了 insecure, 即: grpc.WithInsecure()
 	if !cc.dopts.insecure {
-		// 开启
+		// 开启TLS
 		// 对https证书，密钥做参数校验
 		if cc.dopts.copts.TransportCredentials == nil && cc.dopts.copts.CredsBundle == nil {
 			return nil, errNoTransportSecurity
@@ -196,6 +203,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		if cc.dopts.copts.TransportCredentials != nil || cc.dopts.copts.CredsBundle != nil {
 			return nil, errCredentialsConflict
 		}
+
 		for _, cd := range cc.dopts.copts.PerRPCCredentials {
 			if cd.RequireTransportSecurity() {
 				return nil, errTransportCredentialsMissing
@@ -215,7 +223,8 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	// KeepaliveParams
 	cc.mkp = cc.dopts.copts.KeepaliveParams
 
-	// ua 设置
+	// 请求头中 ua 设置
+	// 添加 "grpc-go/版本号" 标识
 	if cc.dopts.copts.UserAgent != "" {
 		cc.dopts.copts.UserAgent += " " + grpcUA
 	} else {
@@ -230,8 +239,10 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		defer cancel()
 	}
 
+	// 延迟执行
 	defer func() {
 		select {
+		// <-ctx.Done() 说明上下文已经取消了，所以置空创建的连接 conn
 		case <-ctx.Done():
 			switch {
 			case ctx.Err() == err:
@@ -241,6 +252,9 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 			default:
 				conn, err = nil, fmt.Errorf("%v: %v", ctx.Err(), err)
 			}
+
+		// 1. 如果是异步创建conn连接，则走到这里
+		// 2. 如果是设置了 grpc.WithBlock()阻塞到创建完成，连接创建成功也走这里
 		default:
 		}
 	}()
@@ -266,7 +280,9 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	// Determine the resolver to use.
 	//
 	// "unknown_scheme://authority/endpoint"
+	// 确定 使用的 resolver
 	cc.parsedTarget = grpcutil.ParseTarget(cc.target, cc.dopts.copts.Dialer != nil)
+	// 记录日志
 	channelz.Infof(logger, cc.channelzID, "parsed scheme: %q", cc.parsedTarget.Scheme)
 
 	// getResolver 优先从 DialOption 中读取
@@ -282,30 +298,37 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	//
 	// 在本文件引入对应包的时候聚进行了初始化操作，其中包括 passthrough 注册到全局存储 resolver 对象的变量中
 	//
-
-	// 根据解析的Scheme来查找 resolver
+	//
+	// 根据解析的 Scheme 来查找 resolver
 	resolverBuilder := cc.getResolver(cc.parsedTarget.Scheme)
 
 	if resolverBuilder == nil {
+		// 记录日志
+		channelz.Infof(logger, cc.channelzID, "scheme %q not registered, fallback to default scheme", cc.parsedTarget.Scheme)
+
 		// If resolver builder is still nil, the parsed target's scheme is
 		// not registered. Fallback to default resolver and set Endpoint to
 		// the original target.
-		channelz.Infof(logger, cc.channelzID, "scheme %q not registered, fallback to default scheme", cc.parsedTarget.Scheme)
+		//
+		// 如果解析器构建器仍然为空，则解析目标的方案没有注册
+		// 回退到默认解析器，并将端点设置为原始目标
+
+		// 此时使用传递的 target 封装一个 resolver.Target 对象
 		cc.parsedTarget = resolver.Target{
-			Scheme:   resolver.GetDefaultScheme(),
+			Scheme:   resolver.GetDefaultScheme(), //  "passthrough"
 			Endpoint: target,
 		}
 
 		// 走到这里会成功，因为文件头部引入了若干个包已经进行了初始化操作，已经进行了若干个注册
 		resolverBuilder = cc.getResolver(cc.parsedTarget.Scheme)
 
-		// 还没找到，则返回错误
+		// 还没找到（则没有引入对应的包进行初始化），则返回错误
 		if resolverBuilder == nil {
 			return nil, fmt.Errorf("could not get resolver for default scheme: %q", cc.parsedTarget.Scheme)
 		}
 	}
 
-	// 解析请求地址
+	// 解析请求地址的 authority
 	creds := cc.dopts.copts.TransportCredentials
 	if creds != nil && creds.Info().ServerName != "" {
 		cc.authority = creds.Info().ServerName
@@ -342,6 +365,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		credsClone = creds.Clone()
 	}
 
+	// 负载均衡相关配置
 	cc.balancerBuildOpts = balancer.BuildOptions{
 		DialCreds:        credsClone,
 		CredsBundle:      cc.dopts.copts.CredsBundle,
@@ -352,11 +376,13 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	}
 
 	// Build the resolver.
-	// ！！！在 newCCResolverWrapper 中 异步创建连接（使用其他goroutine）
+	// ！！！核心！！！
+	// 在 newCCResolverWrapper 中 进行异步创建连接（使用其他goroutine）
 	rWrapper, err := newCCResolverWrapper(cc, resolverBuilder)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build resolver: %v", err)
 	}
+
 	cc.mu.Lock()
 	cc.resolverWrapper = rWrapper
 	cc.mu.Unlock()
@@ -766,7 +792,8 @@ func (cc *ClientConn) updateResolverState(s resolver.State, err error) error {
 		}
 	}
 
-	// ！！！更新conn状态
+	// ！！！核心
+	// 更新conn状态
 	uccsErr := bw.updateClientConnState(&balancer.ClientConnState{ResolverState: s, BalancerConfig: balCfg})
 	if ret == nil {
 		ret = uccsErr // prefer ErrBadResolver state since any other error is
@@ -930,8 +957,12 @@ func (ac *addrConn) connect() error {
 	ac.updateConnectivityState(connectivity.Connecting, nil)
 	ac.mu.Unlock()
 
+	// 打印整个调用链
+	//debug.PrintStack()
+
 	// Start a goroutine connecting to the server asynchronously.
-	// ！！！启动一个异步连接到服务器的goroutine。
+	// ！！！核心
+	// 启动一个异步连接到服务器的goroutine。
 	// 所以说 连接建立过程是异步的哦
 	go ac.resetTransport()
 	return nil
@@ -1226,6 +1257,7 @@ func (ac *addrConn) resetTransport() {
 	// 循环
 	for i := 0; ; i++ {
 		if i > 0 {
+			// ！！！ TODO
 			ac.cc.resolveNow(resolver.ResolveNowOptions{})
 		}
 
@@ -1312,6 +1344,8 @@ func (ac *addrConn) resetTransport() {
 
 		// Block until the created transport is down. And when this happens,
 		// we restart from the top of the addr list.
+		//
+		// 阻塞，直到创建的传输停止。当这种情况发生时，我们从addr列表的顶部重新启动。
 		<-reconnect.Done()
 		hcancel()
 		// restart connecting - the top of the loop will set state to
