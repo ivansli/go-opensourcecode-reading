@@ -220,6 +220,10 @@ func NewClientTransport(connectCtx, ctx context.Context, addr resolver.Address, 
 // http2_client.go
 func newHTTP2Client(connectCtx, ctx context.Context, addr resolver.Address, opts ConnectOptions, onPrefaceReceipt func (), onGoAway func (GoAwayReason), onClose func ()) (_ *http2Client, err error)
 // conn, err := dial(connectCtx, opts.Dialer, addr, opts.UseProxy, opts.UserAgent)
+// 
+// Keepalive在单独的goroutune中运行，通过发送ping信息来确保连接是活的。
+// go t.keepalive()
+
 
 // http2_client.go
 func dial(ctx context.Context, fn func(context.Context, string) (net.Conn, error), addr resolver.Address, useProxy bool, grpcUA string) (net.Conn, error)

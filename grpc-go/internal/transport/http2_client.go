@@ -416,6 +416,7 @@ func newHTTP2Client(connectCtx, ctx context.Context, addr resolver.Address, opts
 	// 每个传输都有一个专用的goroutine，它从网络上读取HTTP2帧
 	// 然后它将帧分派给相应的流实体
 	//
+	// todo 追源码
 	// 作为一个单独的goroutine运行，负责从网络连接读取数据
 	go t.reader()
 
