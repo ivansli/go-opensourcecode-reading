@@ -44,7 +44,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
 	}
-	// 关闭连接，十分重要
+	// ！！！关闭连接，十分重要
 	defer conn.Close()
 
 	// 把连接conn封装到服务对象Greeter中

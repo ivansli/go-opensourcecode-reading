@@ -54,6 +54,11 @@ type lbConfig struct {
 // Deprecated: Users should not use this struct. Service config should be received
 // through name resolver, as specified here
 // https://github.com/grpc/grpc/blob/master/doc/service_config.md
+//
+// ServiceConfig由服务提供者提供，并包含如何提供的参数
+// 连接到服务的客户端应该正常工作
+//
+// 准备弃用
 type ServiceConfig struct {
 	serviceconfig.Config
 

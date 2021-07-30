@@ -38,35 +38,67 @@ import (
 
 // dialOptions configure a Dial call. dialOptions are set by the DialOption
 // values passed to Dial.
+//
+// dialOptions 用来配置 Dial 调用
+//
 type dialOptions struct {
-	unaryInt  UnaryClientInterceptor
+	// 一元拦截器
+	unaryInt UnaryClientInterceptor
+	// 流式拦截器
 	streamInt StreamClientInterceptor
 
+	// 多个拦截器组成的切片
 	chainUnaryInts  []UnaryClientInterceptor
 	chainStreamInts []StreamClientInterceptor
 
-	cp              Compressor
-	dc              Decompressor
-	bs              internalbackoff.Strategy
-	block           bool
+	// 解压缩
+	cp Compressor
+	dc Decompressor
+
+	bs internalbackoff.Strategy
+
+	// 是否在创建连接时 是阻塞方式创建  grpc.WithBlock()
+	block bool
+
+	// 返回最后一个错误
 	returnLastError bool
-	insecure        bool
-	timeout         time.Duration
-	scChan          <-chan ServiceConfig
-	authority       string
-	copts           transport.ConnectOptions
-	callOptions     []CallOption
+
+	// 使用非安全的方式 grpc.WithInsecure()
+	insecure bool
+
+	// 超时时间
+	timeout time.Duration
+
+	scChan    <-chan ServiceConfig
+	authority string
+
+	copts       transport.ConnectOptions
+	callOptions []CallOption
+
 	// This is used by WithBalancerName dial option.
-	balancerBuilder             balancer.Builder
-	channelzParentID            int64
-	disableServiceConfig        bool
-	disableRetry                bool
-	disableHealthCheck          bool
-	healthCheckFunc             internal.HealthChecker
-	minConnectTimeout           func() time.Duration
-	defaultServiceConfig        *ServiceConfig // defaultServiceConfig is parsed from defaultServiceConfigRawJSON.
+	// 负载均衡相关
+	balancerBuilder balancer.Builder
+
+	// channelz 监控信息相关
+	channelzParentID int64
+
+	disableServiceConfig bool
+	disableRetry         bool
+	disableHealthCheck   bool
+
+	// 健康检查
+	healthCheckFunc internal.HealthChecker
+
+	// 最小的连接超时时间
+	minConnectTimeout func() time.Duration
+
+	// ServiceConfig 服务配置
+	defaultServiceConfig *ServiceConfig // defaultServiceConfig is parsed from defaultServiceConfigRawJSON.
+	// ServiceConfig 服务配置相关的json字符串
 	defaultServiceConfigRawJSON *string
-	resolvers                   []resolver.Builder
+
+	// 名称解析
+	resolvers []resolver.Builder
 }
 
 // DialOption configures how we set up the connection.
@@ -205,6 +237,9 @@ func WithDecompressor(dc Decompressor) DialOption {
 //
 // Deprecated: use WithDefaultServiceConfig and WithDisableServiceConfig
 // instead.  Will be removed in a future 1.x release.
+//
+// 准备弃用
+// 使用 WithDefaultServiceConfig and WithDisableServiceConfig 代替
 func WithBalancerName(balancerName string) DialOption {
 	builder := balancer.Get(balancerName)
 	if builder == nil {
@@ -360,6 +395,9 @@ func WithCredentialsBundle(b credentials.Bundle) DialOption {
 //
 // Deprecated: use DialContext instead of Dial and context.WithTimeout
 // instead.  Will be supported throughout 1.x.
+//
+// 准备弃用
+// 使用 DialContext 代替 Dial
 func WithTimeout(d time.Duration) DialOption {
 	return newFuncDialOption(func(o *dialOptions) {
 		o.timeout = d
@@ -438,6 +476,7 @@ func WithKeepaliveParams(kp keepalive.ClientParameters) DialOption {
 		logger.Warningf("Adjusting keepalive ping interval to minimum period of %v", internal.KeepaliveMinPingTime)
 		kp.Time = internal.KeepaliveMinPingTime
 	}
+
 	return newFuncDialOption(func(o *dialOptions) {
 		o.copts.KeepaliveParams = kp
 	})
@@ -577,18 +616,21 @@ func WithDisableHealthCheck() DialOption {
 // provided one. It makes tests easier to change the health check function.
 //
 // For testing purpose only.
+//
+// 健康检查的方法
 func withHealthCheckFunc(f internal.HealthChecker) DialOption {
 	return newFuncDialOption(func(o *dialOptions) {
 		o.healthCheckFunc = f
 	})
 }
 
+// 默认的 dialOptions 配置信息
 func defaultDialOptions() dialOptions {
 	return dialOptions{
 		disableRetry:    !envconfig.Retry,
 		healthCheckFunc: internal.HealthCheckFunc,
 		copts: transport.ConnectOptions{
-			WriteBufferSize: defaultWriteBufSize,
+			WriteBufferSize: defaultWriteBufSize, // 写缓冲 32K
 			ReadBufferSize:  defaultReadBufSize,
 			UseProxy:        true,
 		},

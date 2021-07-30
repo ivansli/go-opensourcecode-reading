@@ -341,15 +341,20 @@ func (c *controlBuffer) executeAndPut(f func(it interface{}) bool, it cbItem) (b
 		wakeUp = true
 		c.consumerWaiting = false
 	}
+
+	// ping数据结构加入队列中
 	c.list.enqueue(it)
 	if it.isTransportResponseFrame() {
 		c.transportResponseFrames++
 		if c.transportResponseFrames == maxQueuedTransportResponseFrames {
 			// We are adding the frame that puts us over the threshold; create
 			// a throttling channel.
+			//
+			// 我们正在添加超越阈值的框架; 创建一个节流通道
 			c.trfChan.Store(make(chan struct{}))
 		}
 	}
+
 	c.mu.Unlock()
 	if wakeUp {
 		select {

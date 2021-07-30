@@ -40,7 +40,14 @@ func main() {
 	// 建立连接
 	// grpc.WithInsecure() 表示不使用tsl
 	// grpc.WithBlock() 表示在连接正式建立之前一直处于阻塞状态，直到连接建立成功
-	conn, err := grpc.Dial(address, grpc.WithInsecure(), grpc.WithBlock())
+	//
+	// grpc-go/clientconn.go
+	conn, err := grpc.Dial(address,
+		grpc.WithInsecure(),
+		grpc.WithBlock(),
+		//grpc.WithTimeout(time.Second),  // 将会被弃用
+	)
+
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
 	}

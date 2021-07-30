@@ -55,7 +55,11 @@ func (s *server) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloRe
 // https://github.com/rantav/go-grpc-channelz
 // https://github.com/grpc/proposal/blob/master/A14-channelz.md
 //
+// 博客
+// https://blog.csdn.net/RA681t58CJxsgCkJ31/article/details/104079070
+// https://blog.csdn.net/u013536232/article/details/108556544
 // 注册 channelZ 服务
+//
 //
 // Channelz是一种用于内省到GRPC频道的GRPC规范
 // GRPC的频道代表连接和套接字

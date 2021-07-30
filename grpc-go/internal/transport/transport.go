@@ -585,6 +585,7 @@ type Options struct {
 }
 
 // CallHdr carries the information of a particular RPC.
+// 携带特定RPC的信息
 type CallHdr struct {
 	// Host specifies the peer's host.
 	Host string

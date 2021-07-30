@@ -75,6 +75,8 @@ func doneChannelzWrapper(acw *acBalancerWrapper, done func(balancer.DoneInfo)) f
 }
 
 // pick returns the transport that will be used for the RPC.
+// 返回将用于RPC的传输
+//
 // It may block in the following cases:
 // - there's no picker
 // - the current picker returns ErrNoSubConnAvailable

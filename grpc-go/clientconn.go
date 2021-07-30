@@ -134,41 +134,72 @@ func (dcs *defaultConfigSelector) SelectConfig(rpcInfo iresolver.RPCInfo) (*ires
 // The target name syntax is defined in
 // https://github.com/grpc/grpc/blob/master/doc/naming.md.
 // e.g. to use dns resolver, a "dns:///" prefix should be applied to the target.
+//
+// 通过给的target客户端地址创建一个客户端连接，默认使用非阻塞dial
+// 如果是阻塞创建连接，则使用 WithBlock()选项
+// 在非阻塞创建连接中，ctx是无效的
+//
+// 在阻塞的情况下，可以使用ctx取消挂起的连接或使其失效
+// 一旦这个函数返回，取消和过期的ctx将是noop
+// 用户应该调用ClientConn.Close用于在函数返回后终止所有挂起的操作
 func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *ClientConn, err error) {
+	// 客户端连接
 	cc := &ClientConn{
-		target:            target,
-		csMgr:             &connectivityStateManager{},
-		conns:             make(map[*addrConn]struct{}),
-		dopts:             defaultDialOptions(),
-		blockingpicker:    newPickerWrapper(),
+		// 请求的目标地址
+		target: target,
+
+		// 管理conn的连接状态信息
+		csMgr: &connectivityStateManager{},
+
+		conns: make(map[*addrConn]struct{}),
+
+		// Dial() 设置的 Options 信息默认值
+		dopts: defaultDialOptions(),
+
+		blockingpicker: newPickerWrapper(),
+
+		// channelZ 监控信息
 		czData:            new(channelzData),
 		firstResolveEvent: grpcsync.NewEvent(),
 	}
 
+	// 重试相关信息 先 store一个空值
+	// cc.retryThrottler 为 atomic.Value 类型
 	cc.retryThrottler.Store((*retryThrottler)(nil))
+
 	cc.safeConfigSelector.UpdateConfigSelector(&defaultConfigSelector{nil})
+
+	// 设置conn的上下文
 	cc.ctx, cc.cancel = context.WithCancel(context.Background())
 
+	// 调用 Dial() 方法时设置的信息都配置到 cc.dopts 结构体上
 	for _, opt := range opts {
 		opt.apply(&cc.dopts)
 	}
 
 	// 拦截器设置
+	// 如果存在多个拦截器，则只是用第一个拦截器
 	chainUnaryClientInterceptors(cc)
 	chainStreamClientInterceptors(cc)
 
+	// 延迟执行
 	defer func() {
+		// 如果有错误发生，则置空 cc
 		if err != nil {
 			cc.Close()
 		}
 	}()
 
+	// channelz 是 grpc 内部的一些埋点监控性质的信息
+	// 大体上是一个异步的 AddTraceEvent 然后汇聚数值
+	//
 	// gRPC 提供了 Channelz 用于对外提供服务的数据，用于调试、监控等
 	// 根据服务的角色不同，可以提供的数据有：
 	// 	  服务端: Servers, Server, ServerSockets, Socket
 	// 	  客户端: TopChannels, Channel, Subchannel
 	//
 	// channelz 开启，则注册一些信息
+	// !!! 阅读代码可以忽略这些 !!!
 	if channelz.IsOn() {
 		if cc.dopts.channelzParentID != 0 {
 			cc.channelzID = channelz.RegisterChannel(&channelzChannel{cc}, cc.dopts.channelzParentID, target)
@@ -187,7 +218,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		cc.csMgr.channelzID = cc.channelzID
 	}
 
-	// dialOption 设置了 insecure, 即: grpc.WithInsecure()
+	// dialOption 没设置 insecure, 即: 没设置 grpc.WithInsecure()
 	if !cc.dopts.insecure {
 		// 开启TLS
 		// 对https证书，密钥做参数校验
@@ -204,6 +235,8 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 			return nil, errCredentialsConflict
 		}
 
+		// 验证自定义校验中是否设置了需要 TLS
+		// 如果设置了，则报错
 		for _, cd := range cc.dopts.copts.PerRPCCredentials {
 			if cd.RequireTransportSecurity() {
 				return nil, errTransportCredentialsMissing
@@ -212,15 +245,28 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	}
 
 	// 通过json文本形式设置ServiceConfig
+	// 在 Dial() 中通过 grpc.WithDefaultServiceConfig("") 来设置
+	// 例如：
+	// grpc.WithDefaultServiceConfig(fmt.Sprintf(`{ "loadBalancingConfig": [{"%v": {}}] }`, roundrobin.Name))
 	if cc.dopts.defaultServiceConfigRawJSON != nil {
+		// 解析json字符串
 		scpr := parseServiceConfig(*cc.dopts.defaultServiceConfigRawJSON)
 		if scpr.Err != nil {
 			return nil, fmt.Errorf("%s: %v", invalidDefaultServiceConfigErrPrefix, scpr.Err)
 		}
+
+		// defaultServiceConfig 跟 负载均衡等相关
 		cc.dopts.defaultServiceConfig, _ = scpr.Config.(*ServiceConfig)
 	}
 
 	// KeepaliveParams
+	// params := keepalive.ClientParameters{
+	//			Time:                c.cfg.DialKeepAliveTime,
+	//			Timeout:             c.cfg.DialKeepAliveTimeout,
+	//			PermitWithoutStream: c.cfg.PermitWithoutStream,
+	//		}
+	//
+	// 在 Dial() 中 通过 grpc.WithKeepaliveParams(params) 设置
 	cc.mkp = cc.dopts.copts.KeepaliveParams
 
 	// 请求头中 ua 设置
@@ -233,6 +279,13 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 
 	// 客户端超时控制是通过 Context.WithTimeout 进行控制的
 	// 其超时时长可以通过 grpc.WithTimeout(time.Duration) 控制
+	// 未来 grpc.WithTimeout(time.Duration) 将被弃用
+	//
+	// 连接超时时间
+	//
+	// 这里存在一个优先级问题：
+	// 1. 如果 dialOption 设置了超时时间，则根据超时时间封装一个ctx
+	// 2. 否则，使用 DialContext 第一个参数
 	if cc.dopts.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, cc.dopts.timeout)
@@ -242,7 +295,8 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	// 延迟执行
 	defer func() {
 		select {
-		// <-ctx.Done() 说明上下文已经取消了，所以置空创建的连接 conn
+		// <-ctx.Done() 说明上下文已经超时取消了
+		// 所以置空创建的连接 conn
 		case <-ctx.Done():
 			switch {
 			case ctx.Err() == err:
@@ -253,12 +307,11 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 				conn, err = nil, fmt.Errorf("%v: %v", ctx.Err(), err)
 			}
 
-		// 1. 如果是异步创建conn连接，则走到这里
-		// 2. 如果是设置了 grpc.WithBlock()阻塞到创建完成，连接创建成功也走这里
 		default:
 		}
 	}()
 
+	// 从 scChan 中侦听接收 serviceConfig 信息
 	scSet := false
 	if cc.dopts.scChan != nil {
 		// Try to get an initial service config.
@@ -273,6 +326,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		}
 	}
 
+	// 默认取指数退避
 	if cc.dopts.bs == nil {
 		cc.dopts.bs = backoff.DefaultExponential
 	}
@@ -281,6 +335,15 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	//
 	// "unknown_scheme://authority/endpoint"
 	// 确定 使用的 resolver
+	//
+	// cc.parsedTarget 结构为：
+	// type Target struct {
+	//    Scheme    string
+	//    Authority string
+	//    Endpoint  string
+	// }
+	//
+	// 解析调用的目标地址
 	cc.parsedTarget = grpcutil.ParseTarget(cc.target, cc.dopts.copts.Dialer != nil)
 	// 记录日志
 	channelz.Infof(logger, cc.channelzID, "parsed scheme: %q", cc.parsedTarget.Scheme)
@@ -344,8 +407,10 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		cc.authority = cc.parsedTarget.Endpoint
 	}
 
+	// 阻塞等待 scChan
 	if cc.dopts.scChan != nil && !scSet {
 		// Blocking wait for the initial service config.
+		// 阻塞直到 service config 初始化
 		select {
 		case sc, ok := <-cc.dopts.scChan:
 			if ok {
@@ -366,13 +431,14 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	}
 
 	// 负载均衡相关配置
+	// 初始化 balancer
 	cc.balancerBuildOpts = balancer.BuildOptions{
 		DialCreds:        credsClone,
 		CredsBundle:      cc.dopts.copts.CredsBundle,
 		Dialer:           cc.dopts.copts.Dialer,
-		CustomUserAgent:  cc.dopts.copts.UserAgent,
-		ChannelzParentID: cc.channelzID,
-		Target:           cc.parsedTarget,
+		CustomUserAgent:  cc.dopts.copts.UserAgent, // ua
+		ChannelzParentID: cc.channelzID,            // channelz
+		Target:           cc.parsedTarget,          // 解析的目标地址
 	}
 
 	// Build the resolver.
@@ -429,6 +495,8 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 }
 
 // chainUnaryClientInterceptors chains all unary client interceptors into one.
+//
+// 合并一元拦截器
 func chainUnaryClientInterceptors(cc *ClientConn) {
 	interceptors := cc.dopts.chainUnaryInts
 	// Prepend dopts.unaryInt to the chaining interceptors if it exists, since unaryInt will
@@ -436,12 +504,14 @@ func chainUnaryClientInterceptors(cc *ClientConn) {
 	if cc.dopts.unaryInt != nil {
 		interceptors = append([]UnaryClientInterceptor{cc.dopts.unaryInt}, interceptors...)
 	}
+
 	var chainedInt UnaryClientInterceptor
 	if len(interceptors) == 0 {
 		chainedInt = nil
 	} else if len(interceptors) == 1 {
 		chainedInt = interceptors[0]
 	} else {
+		// 如果设置了多个拦截器，则取第一个
 		chainedInt = func(ctx context.Context, method string, req, reply interface{}, cc *ClientConn, invoker UnaryInvoker, opts ...CallOption) error {
 			return interceptors[0](ctx, method, req, reply, cc, getChainUnaryInvoker(interceptors, 0, invoker), opts...)
 		}
@@ -460,6 +530,8 @@ func getChainUnaryInvoker(interceptors []UnaryClientInterceptor, curr int, final
 }
 
 // chainStreamClientInterceptors chains all stream client interceptors into one.
+//
+// 合并流式拦截器
 func chainStreamClientInterceptors(cc *ClientConn) {
 	interceptors := cc.dopts.chainStreamInts
 	// Prepend dopts.streamInt to the chaining interceptors if it exists, since streamInt will
@@ -467,6 +539,7 @@ func chainStreamClientInterceptors(cc *ClientConn) {
 	if cc.dopts.streamInt != nil {
 		interceptors = append([]StreamClientInterceptor{cc.dopts.streamInt}, interceptors...)
 	}
+
 	var chainedInt StreamClientInterceptor
 	if len(interceptors) == 0 {
 		chainedInt = nil
@@ -477,6 +550,7 @@ func chainStreamClientInterceptors(cc *ClientConn) {
 			return interceptors[0](ctx, desc, cc, method, getChainStreamer(interceptors, 0, streamer), opts...)
 		}
 	}
+
 	cc.dopts.streamInt = chainedInt
 }
 
@@ -578,15 +652,23 @@ var _ ClientConnInterface = (*ClientConn)(nil)
 // handshakes. It also handles errors on established connections by
 // re-resolving the name and reconnecting.
 type ClientConn struct {
+	// 上下文
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	target       string
+	// 客户端目标地址
+	target string
+
 	parsedTarget resolver.Target
 	authority    string
-	dopts        dialOptions
-	csMgr        *connectivityStateManager
 
+	// dialOptions 使用dial时的配置项
+	dopts dialOptions
+
+	// conn状态信息相关
+	csMgr *connectivityStateManager
+
+	// 负载均衡
 	balancerBuildOpts balancer.BuildOptions
 	blockingpicker    *pickerWrapper
 
@@ -598,16 +680,23 @@ type ClientConn struct {
 	conns           map[*addrConn]struct{}
 
 	// Keepalive parameter can be updated if a GoAway is received.
-	mkp             keepalive.ClientParameters
+	// 如果接收到超时，则更新Keepalive参数
+	mkp keepalive.ClientParameters
+
+	// 负载均衡
 	curBalancerName string
 	balancerWrapper *ccBalancerWrapper
-	retryThrottler  atomic.Value
+
+	// 重试相关信息
+	retryThrottler atomic.Value
 
 	firstResolveEvent *grpcsync.Event
 
+	// channelz 相关
 	channelzID int64 // channelz unique identification number
 	czData     *channelzData
 
+	// conn的最后一个错误信息相关
 	lceMu               sync.Mutex // protects lastConnectionError
 	lastConnectionError error
 }
@@ -624,6 +713,9 @@ type ClientConn struct {
 //
 func (cc *ClientConn) WaitForStateChange(ctx context.Context, sourceState connectivity.State) bool {
 	// 获取chan
+	// notifyChan 这个 channel 仅通过 close 做广播性的通知
+	// 每当 state 状态变化会惰性产生新的 notifyChan
+	// 当这个 notifyChan 被关闭时就意味着状态有变化了，起到一个类似条件变量的作用
 	ch := cc.csMgr.getNotifyChan()
 
 	// 获取状态 并判断是否等于 sourceState，则返回true
@@ -1654,6 +1746,7 @@ func (ac *addrConn) incrCallsFailed() {
 	atomic.AddInt64(&ac.czData.callsFailed, 1)
 }
 
+// 重试 相关信息
 type retryThrottler struct {
 	max    float64
 	thresh float64

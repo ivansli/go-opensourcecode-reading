@@ -62,7 +62,9 @@ func (b *pickfirstBalancer) ResolverError(err error) {
 	}
 }
 
+// 更新客户端连接状态
 func (b *pickfirstBalancer) UpdateClientConnState(cs balancer.ClientConnState) error {
+	// 客户端连接地址为空，返回错误
 	if len(cs.ResolverState.Addresses) == 0 {
 		b.ResolverError(errors.New("produced zero addresses"))
 		return balancer.ErrBadResolverState
@@ -91,6 +93,10 @@ func (b *pickfirstBalancer) UpdateClientConnState(cs balancer.ClientConnState) e
 		b.sc.Connect()
 	} else {
 		b.cc.UpdateAddresses(b.sc, cs.ResolverState.Addresses)
+
+		// !!!核心
+		// 创建连接conn
+		// balancer_conn_wrappers.go 文件中
 		b.sc.Connect()
 	}
 	return nil

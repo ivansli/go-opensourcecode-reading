@@ -28,6 +28,8 @@ import (
 
 var (
 	r  = rand.New(rand.NewSource(time.Now().UnixNano()))
+	// 使用锁 是因为在这个包里面 r 是个全局的对象
+	// 并发的话，多个 goroutine 使用 r 会有数据竞争
 	mu sync.Mutex
 )
 

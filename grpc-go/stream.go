@@ -184,6 +184,9 @@ func newClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, meth
 	var mc serviceconfig.MethodConfig
 	var onCommit func()
 	var newStream = func(ctx context.Context, done func()) (iresolver.ClientStream, error) {
+		// ！！！ TODO 追源码
+		// 重要 创建新的 stream
+		//
 		// newClientStreamWithParams
 		return newClientStreamWithParams(ctx, desc, cc, method, mc, onCommit, done, opts...)
 	}
@@ -219,6 +222,8 @@ func newClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, meth
 	return newStream(ctx, func() {})
 }
 
+// ！！！！重要
+// 创建 iresolver.ClientStream
 func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *ClientConn, method string, mc serviceconfig.MethodConfig, onCommit, doneFunc func(), opts ...CallOption) (_ iresolver.ClientStream, err error) {
 	c := defaultCallInfo()
 	if mc.WaitForReady != nil {
@@ -244,6 +249,7 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 	}()
 
 	for _, o := range opts {
+		// ！！！before
 		if err := o.before(c); err != nil {
 			return nil, toRPCErr(err)
 		}
@@ -255,6 +261,7 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 		return nil, err
 	}
 
+	// 特定RPC的信息
 	callHdr := &transport.CallHdr{
 		Host:           cc.authority,
 		Method:         method,
@@ -304,6 +311,7 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 		ctx = trace.NewContext(ctx, trInfo.tr)
 	}
 
+	// 通过 context.WithValue 封装新的 ctx
 	ctx = newContextWithRPCInfo(ctx, c.failFast, c.codec, cp, comp)
 	sh := cc.dopts.copts.StatsHandler
 	var beginTime time.Time
@@ -343,12 +351,21 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 
 	// Only this initial attempt has stats/tracing.
 	// TODO(dfawley): move to newAttempt when per-attempt stats are implemented.
+	// ！！！！
 	if err := cs.newAttemptLocked(sh, trInfo); err != nil {
 		cs.finish(err)
 		return nil, err
 	}
 
+	// ！！！！！！！！！！！
+	// TODO 追源码 a.newStream()  创建 stream
+	// op 即：func(a *csAttempt) error { return a.newStream() }
+	//
+	// a.newStream() 即 grpc-go/stream.go
+	// a.newStream() 包含了头信息的创建等重要步骤
 	op := func(a *csAttempt) error { return a.newStream() }
+	// 重要
+	// 追源码 cs.withRetry， 创建stream，失败带有重试功能
 	if err := cs.withRetry(op, func() { cs.bufferForRetryLocked(0, op) }); err != nil {
 		cs.finish(err)
 		return nil, err
@@ -391,6 +408,8 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 
 // newAttemptLocked creates a new attempt with a transport.
 // If it succeeds, then it replaces clientStream's attempt with this new attempt.
+//
+// 使用传输创建一个新的尝试。如果它成功了，那么它将用这个新的尝试替换clientStream的尝试。
 func (cs *clientStream) newAttemptLocked(sh stats.Handler, trInfo *traceInfo) (retErr error) {
 	newAttempt := &csAttempt{
 		cs:           cs,
@@ -432,9 +451,20 @@ func (cs *clientStream) newAttemptLocked(sh stats.Handler, trInfo *traceInfo) (r
 	return nil
 }
 
+// newStream creates a Stream for an RPC.
 func (a *csAttempt) newStream() error {
 	cs := a.cs
 	cs.callHdr.PreviousAttempts = cs.numRetries
+
+	// TODO 追源码！！！
+	// grpc-go/internal/transport/http2_client.go:727
+	// NewStream
+	//	1. 自定义请求校验
+	//	2. 添加头部字段信息
+	//  ....... 等等
+	//
+	// 重要
+	// a.t.NewStream 即 grpc-go/internal/transport/http2_client.go
 	s, err := a.t.NewStream(cs.ctx, cs.callHdr)
 	if err != nil {
 		// Return without converting to an RPC error so retry code can
@@ -679,6 +709,8 @@ func (cs *clientStream) Context() context.Context {
 	return cs.attempt.s.Context()
 }
 
+// ！！！重要
+// 创建stream，失败带有重试功能
 func (cs *clientStream) withRetry(op func(a *csAttempt) error, onSuccess func()) error {
 	cs.mu.Lock()
 	for {
@@ -692,7 +724,13 @@ func (cs *clientStream) withRetry(op func(a *csAttempt) error, onSuccess func())
 		}
 		a := cs.attempt
 		cs.mu.Unlock()
+
+		// TODO 追源码
+		// op 即：func(a *csAttempt) error { return a.newStream() }
+		//
+		// a.newStream() 即 grpc-go/stream.go
 		err := op(a)
+
 		cs.mu.Lock()
 		if a != cs.attempt {
 			// We started another attempt already.
