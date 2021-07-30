@@ -7,9 +7,18 @@
 源码追踪主要从 example 目录中的各个使用例子开始
 
 - example/helloworld 是一个简单的例子<br/>
+> 主要通过该例子追溯源码
 
-> 通过该例子追溯交互逻辑
->
+```
+├── greeter_client
+│   └── main.go
+├── greeter_server
+│   └── main.go
+└── helloworld
+    ├── helloworld.pb.go
+    ├── helloworld.proto
+    └── helloworld_grpc.pb.go
+```
 
 - example/features 包含了gRpc-go的各种特性使用（重要）
 
@@ -28,6 +37,7 @@
 ├── metadata  # metadata相关
 ├── multiplex
 ├── name_resolving
+├── name_resolving_etcd # 使用etcd服务的名称解析
 ├── proto
 ├── reflection
 ├── retry
@@ -52,13 +62,34 @@ func NewGreeterClient(cc grpc.ClientConnInterface) GreeterClient
 // proto生成的go中
 func (c *greeterClient) SayHello(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (*HelloReply, error)
 //err := c.cc.Invoke(ctx, "/helloworld.Greeter/SayHello", in, out, opts...)
+
 // call.go文件
 func (cc *ClientConn) Invoke(ctx context.Context, method string, args, reply interface{}, opts ...CallOption) error
 //invoke(ctx, method, args, reply, cc, opts...)
+
 func invoke(ctx context.Context, method string, req, reply interface{}, cc *ClientConn, opts ...CallOption) error
 // cs, err := newClientStream(ctx, unaryStreamDesc, cc, method, opts...)
+
 // stream.go文件
 func newClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, method string, opts ...CallOption) (_ ClientStream, err error)
+// newClientStreamWithParams(ctx, desc, cc, method, mc, onCommit, done, opts...)
+
+// stream.go文件
+func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *ClientConn, method string, mc serviceconfig.MethodConfig, onCommit, doneFunc func(), opts ...CallOption) (_ iresolver.ClientStream, err error)
+// op := func(a *csAttempt) error { return a.newStream() }
+// cs.withRetry(op, func() { cs.bufferForRetryLocked(0, op) })
+
+// stream.go文件
+// 为rpc创建stream
+func (a *csAttempt) newStream() error
+// s, err := a.t.NewStream(cs.ctx, cs.callHdr)
+
+// grpc-go/internal/transport/http2_client.go
+// a.t.NewStream
+// TODO 追源码
+// 很重要
+// 创建stream以及消息头信息等
+func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Stream, err error)
 
 //
 // SendMsg RecvMsg 都是 type ServerStream interface 接口中定义方法
