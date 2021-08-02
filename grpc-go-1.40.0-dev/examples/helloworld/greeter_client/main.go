@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -34,6 +35,48 @@ const (
 	defaultName = "world"
 )
 
+// unaryInterceptor is an example unary interceptor.
+//
+// 一元拦截器
+func unaryInterceptor1(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	start := time.Now()
+
+	// 请求服务端
+	err := invoker(ctx, method, req, reply, cc, opts...)
+
+	end := time.Now()
+	fmt.Printf("unaryInterceptor1 RPC: %s, start time: %s, end time: %s\n", method, start.Format("Basic"), end.Format(time.RFC3339Nano))
+	return err
+}
+
+// unaryInterceptor is an example unary interceptor.
+//
+// 一元拦截器
+func unaryInterceptor2(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	start := time.Now()
+
+	// 请求服务端
+	err := invoker(ctx, method, req, reply, cc, opts...)
+
+	end := time.Now()
+	fmt.Printf("unaryInterceptor2 RPC: %s, start time: %s, end time: %s\n", method, start.Format("Basic"), end.Format(time.RFC3339Nano))
+	return err
+}
+
+// unaryInterceptor is an example unary interceptor.
+//
+// 一元拦截器
+func unaryInterceptor3(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	start := time.Now()
+
+	// 请求服务端
+	err := invoker(ctx, method, req, reply, cc, opts...)
+
+	end := time.Now()
+	fmt.Printf("unaryInterceptor3 RPC: %s, start time: %s, end time: %s\n", method, start.Format("Basic"), end.Format(time.RFC3339Nano))
+	return err
+}
+
 func main() {
 	// Set up a connection to the server.
 	//
@@ -45,7 +88,14 @@ func main() {
 	conn, err := grpc.Dial(address,
 		grpc.WithInsecure(),
 		grpc.WithBlock(),
-		//grpc.WithTimeout(time.Second),  // 将会被弃用
+		//grpc.WithTimeout(time.Second),  // 将会被弃用,使用 grpc.DialContext() 替代
+
+		// 拦截器设置
+		// 单独设置的在合并时排在第一个，但 是最后执行
+		// 一次设置单独的拦截器
+		grpc.WithUnaryInterceptor(unaryInterceptor3),
+		// 一次设置多个拦截器
+		grpc.WithChainUnaryInterceptor(unaryInterceptor1, unaryInterceptor2),
 	)
 
 	if err != nil {

@@ -80,8 +80,14 @@ func Get(name string) Builder {
 // try to connect to them (in sequence), and stop trying the
 // remainder once one connection is successful.
 //
+// SubConn表示一个gRPC子连接，每个子连接包含一个地址列表
+// gRPC将尝试连接到它们(依次)，并在一个连接成功后停止尝试剩余的连接。
+//
 // The reconnect backoff will be applied on the list, not a single address.
 // For example, try_on_all_addresses -> backoff -> try_on_all_addresses.
+//
+// 重新连接回退将应用于列表，而不是单个地址
+// 例如： try_on_all_addresses -> backoff -> try_on_all_addresses
 //
 // All SubConns start in IDLE, and will not try to connect. To trigger
 // the connecting, Balancers must call Connect.
@@ -89,10 +95,17 @@ func Get(name string) Builder {
 // When the connection becomes IDLE, it will not reconnect unless Connect is
 // called.
 //
+// 所有的子conns在IDLE中启动，并且不会尝试连接，要触发连接，平衡器必须调用Connect
+// 当连接遇到错误时，它将立即重新连接当连接变为IDLE时，它将不会重新连接，除非调用Connect
+//
 // This interface is to be implemented by gRPC. Users should not need a
 // brand new implementation of this interface. For the situations like
 // testing, the new implementation should embed this interface. This allows
 // gRPC to add new methods to this interface.
+//
+// 该接口将由 gRPC 实现。用户不应该需要这个界面的全新实现
+// 对于像测试这样的情况，新的实现应该嵌入这个接口。这允许gRPC向这个接口添加新方法
+//
 type SubConn interface {
 	// UpdateAddresses updates the addresses used in this SubConn.
 	// gRPC checks if currently-connected address is still in the new list.
@@ -105,6 +118,7 @@ type SubConn interface {
 	// Deprecated: This method is now part of the ClientConn interface and will
 	// eventually be removed from here.
 	UpdateAddresses([]resolver.Address)
+
 	// Connect starts the connecting for this SubConn.
 	Connect()
 }
@@ -124,11 +138,18 @@ type NewSubConnOptions struct {
 }
 
 // State contains the balancer's state relevant to the gRPC ClientConn.
+//
+// State 包含与 gRPC ClientConn 相关的平衡器状态
 type State struct {
 	// State contains the connectivity state of the balancer, which is used to
 	// determine the state of the ClientConn.
 	ConnectivityState connectivity.State
+
 	// Picker is used to choose connections (SubConns) for RPCs.
+	// 选择器用于为rpc选择连接(SubConns)
+	// type Picker interface {
+	//    Pick(info PickInfo) (PickResult, error)
+	// }
 	Picker Picker
 }
 
@@ -146,9 +167,11 @@ type ClientConn interface {
 	// balancer调用NewSubConn来创建一个新的SubConn它不会阻塞并等待连接建立
 	// SubConn的行为可以通过选项来控制
 	NewSubConn([]resolver.Address, NewSubConnOptions) (SubConn, error)
+
 	// RemoveSubConn removes the SubConn from ClientConn.
 	// The SubConn will be shutdown.
 	RemoveSubConn(SubConn)
+
 	// UpdateAddresses updates the addresses used in the passed in SubConn.
 	// gRPC checks if the currently connected address is still in the new list.
 	// If so, the connection will be kept. Else, the connection will be
@@ -202,11 +225,18 @@ type BuildOptions struct {
 }
 
 // Builder creates a balancer.
+//
+// 负载均衡器
 type Builder interface {
 	// Build creates a new balancer with the ClientConn.
+	//
+	// 通过 ClientConn 创建一个负载均衡器
 	Build(cc ClientConn, opts BuildOptions) Balancer
+
 	// Name returns the name of balancers built by this builder.
 	// It will be used to pick balancers (for example in service config).
+	//
+	// Name 返回此生成器生成的平衡器的名称
 	Name() string
 }
 
@@ -223,6 +253,7 @@ type PickInfo struct {
 	// FullMethodName is the method name that NewClientStream() is called
 	// with. The canonical format is /service/Method.
 	FullMethodName string
+
 	// Ctx is the RPC's context, and may contain relevant RPC-level information
 	// like the outgoing header metadata.
 	Ctx context.Context
@@ -259,6 +290,7 @@ var (
 )
 
 // PickResult contains information related to a connection chosen for an RPC.
+// PickResult 包含与为RPC选择的连接相关的信息。
 type PickResult struct {
 	// SubConn is the connection to use for this pick, if its state is Ready.
 	// If the state is not Ready, gRPC will block the RPC until a new Picker is
@@ -284,7 +316,11 @@ func TransientFailureError(e error) error { return e }
 // Balancer is expected to generate a new picker from its snapshot every time its
 // internal state has changed.
 //
+// gRPC使用Picker来选择一个SubConn来发送RPC
+// 当平衡器的内部状态发生变化时，平衡器将从它的快照中生成一个新的选择器
+//
 // The pickers used by gRPC can be updated by ClientConn.UpdateState().
+//
 type Picker interface {
 	// Pick returns the connection to use for this RPC and related information.
 	//
@@ -311,11 +347,17 @@ type Picker interface {
 // Balancer takes input from gRPC, manages SubConns, and collects and aggregates
 // the connectivity states.
 //
+// Balancer 接收来自gRPC的输入，管理SubConns，并收集和聚合连接状态。
+//
 // It also generates and updates the Picker used by gRPC to pick SubConns for RPCs.
+//
+// 它还生成和更新gRPC用来为rpc挑选子conns的Picker
 //
 // UpdateClientConnState, ResolverError, UpdateSubConnState, and Close are
 // guaranteed to be called synchronously from the same goroutine.  There's no
 // guarantee on picker.Pick, it may be called anytime.
+//
+// 保证从相同的goroutine同步调用 picker.Pick 是没有保证的，它可以随时被调用
 type Balancer interface {
 	// UpdateClientConnState is called by gRPC when the state of the ClientConn
 	// changes.  If the error returned is ErrBadResolverState, the ClientConn

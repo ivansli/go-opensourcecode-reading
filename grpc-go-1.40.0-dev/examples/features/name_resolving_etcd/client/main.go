@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/resolver"
 )
 
 const (
@@ -128,42 +127,44 @@ func main() {
 
 // exampleResolverBuilder is a
 // ResolverBuilder(https://godoc.org/google.golang.org/grpc/resolver#Builder).
-type exampleResolverBuilder struct{}
-
-func (*exampleResolverBuilder) Build(target resolver.Target, cc resolver.ClientConn, opts resolver.BuildOptions) (resolver.Resolver, error) {
-	r := &exampleResolver{
-		target: target,
-		cc:     cc,
-		addrsStore: map[string][]string{
-			exampleServiceName: {backendAddr},
-		},
-	}
-	r.start()
-	return r, nil
-}
-func (*exampleResolverBuilder) Scheme() string { return exampleScheme }
-
-// exampleResolver is a
-// Resolver(https://godoc.org/google.golang.org/grpc/resolver#Resolver).
-type exampleResolver struct {
-	target     resolver.Target
-	cc         resolver.ClientConn
-	addrsStore map[string][]string
-}
-
-func (r *exampleResolver) start() {
-	addrStrs := r.addrsStore[r.target.Endpoint]
-	addrs := make([]resolver.Address, len(addrStrs))
-	for i, s := range addrStrs {
-		addrs[i] = resolver.Address{Addr: s}
-	}
-	r.cc.UpdateState(resolver.State{Addresses: addrs})
-}
-func (*exampleResolver) ResolveNow(o resolver.ResolveNowOptions) {}
-func (*exampleResolver) Close()                                  {}
-
-func init() {
-	// Register the example ResolverBuilder. This is usually done in a package's
-	// init() function.
-	resolver.Register(&exampleResolverBuilder{})
-}
+//type exampleResolverBuilder struct{}
+//
+//func (*exampleResolverBuilder) Build(target resolver.Target, cc resolver.ClientConn, opts resolver.BuildOptions) (resolver.Resolver, error) {
+//	r := &exampleResolver{
+//		target: target,
+//		cc:     cc,
+//		addrsStore: map[string][]string{
+//			exampleServiceName: {backendAddr},
+//		},
+//	}
+//	r.start()
+//	return r, nil
+//}
+//func (*exampleResolverBuilder) Scheme() string { return exampleScheme }
+//
+//// exampleResolver is a
+//// Resolver(https://godoc.org/google.golang.org/grpc/resolver#Resolver).
+//type exampleResolver struct {
+//	target     resolver.Target
+//	cc         resolver.ClientConn
+//	addrsStore map[string][]string
+//}
+//
+//func (r *exampleResolver) start() {
+//	addrStrs := r.addrsStore[r.target.Endpoint]
+//	addrs := make([]resolver.Address, len(addrStrs))
+//	for i, s := range addrStrs {
+//		addrs[i] = resolver.Address{Addr: s}
+//	}
+//
+//	// resolver_conn_wrapper.go 中 UpdateState 方法，来更新地址列表
+//	r.cc.UpdateState(resolver.State{Addresses: addrs})
+//}
+//func (*exampleResolver) ResolveNow(o resolver.ResolveNowOptions) {}
+//func (*exampleResolver) Close()                                  {}
+//
+//func init() {
+//	// Register the example ResolverBuilder. This is usually done in a package's
+//	// init() function.
+//	resolver.Register(&exampleResolverBuilder{})
+//}

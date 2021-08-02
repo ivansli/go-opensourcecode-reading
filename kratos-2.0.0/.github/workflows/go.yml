@@ -1,0 +1,48 @@
+name: Go
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.16
+
+    - name: Build
+      run: go build ./...
+
+    - name: Test
+      run: go test -race ./...
+
+    - name: Kratos
+      run: |
+        cd cmd/kratos
+        go build ./...
+        go test ./...
+
+    - name: HTTP
+      run: |
+        cd cmd/protoc-gen-go-http
+        go build ./...
+        go test ./...
+
+    - name: Examples
+      run: |
+        cd examples
+        go build ./...
+        go test ./...
+
+    - name: Lint
+      run: |
+        go get golang.org/x/lint/golint
+        golint ./...

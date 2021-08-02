@@ -72,11 +72,15 @@ type Client struct {
 }
 
 // New creates a new etcdv3 client from a given configuration.
+//
+// 通过给的配置信息创建客户端
 func New(cfg Config) (*Client, error) {
+	// 配置信息中服务端地址为空，返回错误
 	if len(cfg.Endpoints) == 0 {
 		return nil, ErrNoAvailableEndpoints
 	}
 
+	// 创建客户端
 	return newClient(&cfg)
 }
 
@@ -212,6 +216,7 @@ func (c *Client) autoSync() {
 
 // dialSetupOpts gives the dial opts prior to any authentication.
 func (c *Client) dialSetupOpts(creds grpccredentials.TransportCredentials, dopts ...grpc.DialOption) (opts []grpc.DialOption, err error) {
+	// 长连接配置项
 	if c.cfg.DialKeepAliveTime > 0 {
 		params := keepalive.ClientParameters{
 			Time:                c.cfg.DialKeepAliveTime,
@@ -222,9 +227,11 @@ func (c *Client) dialSetupOpts(creds grpccredentials.TransportCredentials, dopts
 	}
 	opts = append(opts, dopts...)
 
+	// 连接是否是使用安全方式连接
 	if creds != nil {
 		opts = append(opts, grpc.WithTransportCredentials(creds))
 	} else {
+		// 使用非安全方式进行连接
 		opts = append(opts, grpc.WithInsecure())
 	}
 
@@ -232,6 +239,8 @@ func (c *Client) dialSetupOpts(creds grpccredentials.TransportCredentials, dopts
 	// TODO: Replace all of clientv3/retry.go with RetryPolicy:
 	// https://github.com/grpc/grpc-proto/blob/cdd9ed5c3d3f87aef62f373b93361cf7bddc620d/grpc/service_config/service_config.proto#L130
 	rrBackoff := withBackoff(c.roundRobinQuorumBackoff(defaultBackoffWaitBetween, defaultBackoffJitterFraction))
+
+	// 添加拦截器
 	opts = append(opts,
 		// Disable stream retry by default since go-grpc-middleware/retry does not support client streams.
 		// Streams that are safe to retry are enabled individually.
@@ -273,16 +282,22 @@ func (c *Client) getToken(ctx context.Context) error {
 // of the provided endpoint determines the scheme used for all endpoints of the client connection.
 func (c *Client) dialWithBalancer(dopts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	creds := c.credentialsForEndpoint(c.Endpoints()[0])
+	// 名称解析器
 	opts := append(dopts, grpc.WithResolvers(c.resolver))
+
+	// 创建 conn 连接对象
 	return c.dial(creds, opts...)
 }
 
 // dial configures and dials any grpc balancer target.
 func (c *Client) dial(creds grpccredentials.TransportCredentials, dopts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	// 设置 dialOptions
 	opts, err := c.dialSetupOpts(creds, dopts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure dialer: %v", err)
 	}
+
+	// 自定义校验
 	if c.authTokenBundle != nil {
 		opts = append(opts, grpc.WithPerRPCCredentials(c.authTokenBundle.PerRPCCredentials()))
 	}
@@ -293,11 +308,17 @@ func (c *Client) dial(creds grpccredentials.TransportCredentials, dopts ...grpc.
 	if c.cfg.DialTimeout > 0 {
 		var cancel context.CancelFunc
 		dctx, cancel = context.WithTimeout(c.ctx, c.cfg.DialTimeout)
-		defer cancel() // TODO: Is this right for cases where grpc.WithBlock() is not set on the dial options?
+
+		// TODO: Is this right for cases where grpc.WithBlock() is not set on the dial options?
+		//
+		// 对于拨号选项上没有设置grpc.WithBlock()的情况，这是正确的吗?
+		defer cancel()
 	}
 
 	initialEndpoints := strings.Join(c.cfg.Endpoints, ";")
 	target := fmt.Sprintf("%s://%p/#initially=[%s]", resolver.Schema, c, initialEndpoints)
+
+	// 通过grpc创建客户端对象
 	conn, err := grpc.DialContext(dctx, target, opts...)
 	if err != nil {
 		return nil, err
@@ -322,22 +343,28 @@ func (c *Client) credentialsForEndpoint(ep string) grpccredentials.TransportCred
 	}
 }
 
+// 创建客户端
 func newClient(cfg *Config) (*Client, error) {
 	if cfg == nil {
 		cfg = &Config{}
 	}
+
 	var creds grpccredentials.TransportCredentials
 	if cfg.TLS != nil {
 		creds = credentials.NewBundle(credentials.Config{TLSConfig: cfg.TLS}).TransportCredentials()
 	}
 
 	// use a temporary skeleton client to bootstrap first connection
+	//
+	// 使用临时 骨架客户端 引导第一个连接
 	baseCtx := context.TODO()
 	if cfg.Context != nil {
 		baseCtx = cfg.Context
 	}
 
+	// 创建可取消的上下文
 	ctx, cancel := context.WithCancel(baseCtx)
+	// 客户端对象
 	client := &Client{
 		conn:     nil,
 		cfg:      *cfg,
@@ -350,26 +377,32 @@ func newClient(cfg *Config) (*Client, error) {
 	}
 
 	var err error
+	// 创建日志对象
 	if cfg.Logger != nil {
 		client.lg = cfg.Logger
 	} else if cfg.LogConfig != nil {
 		client.lg, err = cfg.LogConfig.Build()
 	} else {
+		// zap
 		client.lg, err = CreateDefaultZapLogger()
 	}
 	if err != nil {
 		return nil, err
 	}
 
+	// 连接客户端账号、密码
 	if cfg.Username != "" && cfg.Password != "" {
 		client.Username = cfg.Username
 		client.Password = cfg.Password
 		client.authTokenBundle = credentials.NewBundle(credentials.Config{})
 	}
+
 	if cfg.MaxCallSendMsgSize > 0 || cfg.MaxCallRecvMsgSize > 0 {
 		if cfg.MaxCallRecvMsgSize > 0 && cfg.MaxCallSendMsgSize > cfg.MaxCallRecvMsgSize {
 			return nil, fmt.Errorf("gRPC message recv limit (%d bytes) must be greater than send limit (%d bytes)", cfg.MaxCallRecvMsgSize, cfg.MaxCallSendMsgSize)
 		}
+
+		// grpc 请求 option配置项
 		callOpts := []grpc.CallOption{
 			defaultWaitForReady,
 			defaultMaxCallSendMsgSize,
@@ -381,17 +414,23 @@ func newClient(cfg *Config) (*Client, error) {
 		if cfg.MaxCallRecvMsgSize > 0 {
 			callOpts[2] = grpc.MaxCallRecvMsgSize(cfg.MaxCallRecvMsgSize)
 		}
+
 		client.callOpts = callOpts
 	}
 
+	// 名称解析器
 	client.resolver = resolver.New(cfg.Endpoints...)
 
+	// 连接服务端节点数 < 1
 	if len(cfg.Endpoints) < 1 {
 		client.cancel()
 		return nil, fmt.Errorf("at least one Endpoint is required in client config")
 	}
+
 	// Use a provided endpoint target so that for https:// without any tls config given, then
 	// grpc will assume the certificate server name is the endpoint host.
+	//
+	// 创建客户端连接 conn
 	conn, err := client.dialWithBalancer()
 	if err != nil {
 		client.cancel()
@@ -413,6 +452,7 @@ func newClient(cfg *Config) (*Client, error) {
 	if client.cfg.DialTimeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, client.cfg.DialTimeout)
 	}
+
 	err = client.getToken(ctx)
 	if err != nil {
 		client.Close()
@@ -422,7 +462,9 @@ func newClient(cfg *Config) (*Client, error) {
 	}
 	cancel()
 
+	// 当设置时将拒绝在过时的集群上创建客户端
 	if cfg.RejectOldCluster {
+		// 校验版本号
 		if err := client.checkVersion(); err != nil {
 			client.Close()
 			return nil, err

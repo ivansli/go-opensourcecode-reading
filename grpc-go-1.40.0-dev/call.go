@@ -40,13 +40,19 @@ func (cc *ClientConn) Invoke(ctx context.Context, method string, args, reply int
 	// 	另一部分是在 请求具体方法时设置
 	opts = combine(cc.dopts.callOptions, opts)
 
+	//////////////////////////////////////////////
 	// 一元拦截器存在，则把 invoke 封装进去
-	// 先执行拦截器，再执行 invoke
+	// 含有拦截器的逻辑走这里
+	// 多个拦截器存在的话 则逻辑类似 洋葱模型
+	// 一层层包裹，真正的调用远端逻辑在最内层
+	//////////////////////////////////////////////
 	if cc.dopts.unaryInt != nil {
 		return cc.dopts.unaryInt(ctx, method, args, reply, cc, invoke, opts...)
 	}
 
-	// invoke 真正执行client调用
+	//////////////////////////////////////////////
+	// 不含有拦截器的逻辑走这里
+	//////////////////////////////////////////////
 	return invoke(ctx, method, args, reply, cc, opts...)
 }
 

@@ -150,6 +150,8 @@ func (b *dnsBuilder) Build(target resolver.Target, cc resolver.ClientConn, opts 
 	}
 
 	d.wg.Add(1)
+
+	// 单独开一个 goroutine watcher 给定域名的 dns 信息变化
 	go d.watcher()
 	return d, nil
 }
@@ -210,11 +212,14 @@ func (d *dnsResolver) watcher() {
 	defer d.wg.Done()
 	backoffIndex := 1
 	for {
+		// 进行dns解析 如果成功就调用UpdateState方法更新连接信息
 		state, err := d.lookup()
 		if err != nil {
 			// Report error to the underlying grpc.ClientConn.
 			d.cc.ReportError(err)
 		} else {
+			// 更新地址
+			// 如果是刚进到这个循环，会先执行一次
 			err = d.cc.UpdateState(*state)
 		}
 
@@ -222,6 +227,10 @@ func (d *dnsResolver) watcher() {
 		if err == nil {
 			// Success resolving, wait for the next ResolveNow. However, also wait 30 seconds at the very least
 			// to prevent constantly re-resolving.
+			//
+			// 第一个select 只有d.rn这个channel里用消息了才能触发
+			// 所以前面的ResolveNow方法实际上是写入了一个标记，让这个select能够退出 从而能够去执行后续逻辑
+			//
 			backoffIndex = 1
 			timer = newTimerDNSResRate(minDNSResRate)
 			select {
@@ -235,11 +244,12 @@ func (d *dnsResolver) watcher() {
 			timer = newTimer(backoff.DefaultExponential.Backoff(backoffIndex))
 			backoffIndex++
 		}
+
 		select {
 		case <-d.ctx.Done():
 			timer.Stop()
 			return
-		case <-timer.C:
+		case <-timer.C: // 第二个select 用一个 timer 来限制dns更新频率
 		}
 	}
 }

@@ -31,53 +31,98 @@ import (
 )
 
 // Name is the name of round_robin balancer.
+// 轮询 负载均衡器
 const Name = "round_robin"
 
 var logger = grpclog.Component("roundrobin")
 
-// newBuilder creates a new roundrobin balancer builder.
-func newBuilder() balancer.Builder {
-	return base.NewBalancerBuilder(Name, &rrPickerBuilder{}, base.Config{HealthCheck: true})
-}
-
+// 初始化
+// 注册 [负载均衡器] 的构造器
 func init() {
 	balancer.Register(newBuilder())
 }
 
+// newBuilder creates a new roundrobin balancer builder.
+// 创建一个新的 轮询负载均衡器 的构造器
+func newBuilder() balancer.Builder {
+	// 返回负载均衡器的构造器
+	// 注意是 baseBuilder
+	return base.NewBalancerBuilder(
+		Name,                           // 负载均衡器名称
+		&rrPickerBuilder{},             // 负载均衡器对象
+		base.Config{HealthCheck: true}, // 是否健康检查
+	)
+}
+
+// 构造器
 type rrPickerBuilder struct{}
 
+// 构造器 创建一个 负载均衡器
+//
+// info base.PickerBuildInfo
+//
+// type PickerBuildInfo struct {
+//    ReadySCs map[balancer.SubConn]SubConnInfo
+// }
+//
+// type SubConnInfo struct {
+//    Address resolver.Address
+// }
 func (*rrPickerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
 	logger.Infof("roundrobinPicker: newPicker called with info: %v", info)
 	if len(info.ReadySCs) == 0 {
 		return base.NewErrPicker(balancer.ErrNoSubConnAvailable)
 	}
+
+	// type SubConn interface {
+	//    UpdateAddresses([]resolver.Address)
+	//    Connect()
+	// }
 	var scs []balancer.SubConn
+
+	// 获取所有的 balancer.SubConn
 	for sc := range info.ReadySCs {
 		scs = append(scs, sc)
 	}
+
 	return &rrPicker{
 		subConns: scs,
+
 		// Start at a random index, as the same RR balancer rebuilds a new
 		// picker when SubConn states change, and we don't want to apply excess
 		// load to the first server in the list.
+		//
+		// 从一个随机索引开始
+		// 因为当 SubConn 状态改变时，相同的RR平衡器重新构建一个新的选择器
+		// 我们不想将多余的负载应用到列表中的第一个服务器
 		next: grpcrand.Intn(len(scs)),
 	}
 }
 
+// 轮询 picker
 type rrPicker struct {
 	// subConns is the snapshot of the roundrobin balancer when this picker was
 	// created. The slice is immutable. Each Get() will do a round robin
 	// selection from it and return the selected SubConn.
+	//
+	// subConns是rounddrobin平衡器创建时的快照
+	// 切片是不可变的，每个Get()将对其进行轮询选择，并返回所选的SubConn
 	subConns []balancer.SubConn
 
 	mu   sync.Mutex
 	next int
 }
 
+// 选择一个 SubConn，并把next设置为下一个
 func (p *rrPicker) Pick(balancer.PickInfo) (balancer.PickResult, error) {
 	p.mu.Lock()
+
+	// 选中的
 	sc := p.subConns[p.next]
+	// 由于是轮询，所以next+1
 	p.next = (p.next + 1) % len(p.subConns)
+
 	p.mu.Unlock()
+
 	return balancer.PickResult{SubConn: sc}, nil
 }

@@ -51,7 +51,9 @@ type ccBalancerWrapper struct {
 	subConns map[*acBalancerWrapper]struct{}
 }
 
+// 对负载均衡器 包装
 func newCCBalancerWrapper(cc *ClientConn, b balancer.Builder, bopts balancer.BuildOptions) *ccBalancerWrapper {
+	// 此时 cc *ClientConn 中已经包含了所有的可用地址信息
 	ccb := &ccBalancerWrapper{
 		cc:       cc,
 		updateCh: buffer.NewUnbounded(),
@@ -59,13 +61,19 @@ func newCCBalancerWrapper(cc *ClientConn, b balancer.Builder, bopts balancer.Bui
 		done:     grpcsync.NewEvent(),
 		subConns: make(map[*acBalancerWrapper]struct{}),
 	}
+
+	// 使用另一个协程来监听变化
 	go ccb.watcher()
+
+	// 使用 负载均衡构建器 来创建一个 负载均衡器
+	// 如果是 roundrobin 在 balancer/roundrobin/roundrobin.go
 	ccb.balancer = b.Build(ccb, bopts)
 	return ccb
 }
 
 // watcher balancer functions sequentially, so the balancer can be implemented
 // lock-free.
+// watcher balancer 函数顺序，所以平衡器可以实现无锁。
 func (ccb *ccBalancerWrapper) watcher() {
 	for {
 		select {
@@ -74,6 +82,7 @@ func (ccb *ccBalancerWrapper) watcher() {
 			if ccb.closed.HasFired() {
 				break
 			}
+
 			switch u := t.(type) {
 			case *scStateUpdate:
 				ccb.balancerMu.Lock()
@@ -137,14 +146,20 @@ func (ccb *ccBalancerWrapper) handleSubConnStateChange(sc balancer.SubConn, s co
 }
 
 // 更新 服务端地址列表 并创建连接
+//
+// ccs *balancer.ClientConnState 包含解析出来的地址列表
 func (ccb *ccBalancerWrapper) updateClientConnState(ccs *balancer.ClientConnState) error {
 	ccb.balancerMu.Lock()
 	defer ccb.balancerMu.Unlock()
 
-	///////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////
 	// ！！！建立连接
-	// pickfirst.go 文件在
-	///////////////////////////////////////////////
+	// pick_first 在 pickfirst.go
+	//
+	//
+	// roundrobin 在 balancer/base/balancer.go
+	// 	roundrobin 会对所有可用的地址建立对应连接以备在 invoke时使用
+	////////////////////////////////////////////////////////////
 	return ccb.balancer.UpdateClientConnState(*ccs)
 }
 

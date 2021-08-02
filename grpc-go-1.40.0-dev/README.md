@@ -7,6 +7,7 @@
 源码追踪主要从 example 目录中的各个使用例子开始
 
 - example/helloworld 是一个简单的例子<br/>
+
 > 主要通过该例子追溯源码
 
 ```
@@ -90,7 +91,6 @@ func (a *csAttempt) newStream() error
 // 很重要
 // 创建stream以及消息头信息等
 func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Stream, err error)
-
 
 //
 // SendMsg RecvMsg 都是 type ServerStream interface 接口中定义方法
@@ -224,7 +224,6 @@ func newHTTP2Client(connectCtx, ctx context.Context, addr resolver.Address, opts
 // Keepalive在单独的goroutune中运行，通过发送ping信息来确保连接是活的。
 // go t.keepalive()
 
-
 // http2_client.go
 func dial(ctx context.Context, fn func(context.Context, string) (net.Conn, error), addr resolver.Address, useProxy bool, grpcUA string) (net.Conn, error)
 // (&net.Dialer{}).DialContext(ctx, networkType, address)
@@ -240,4 +239,5 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (Conn
 
 # 参考以及扩展阅读
 
-https://segmentfault.com/a/1190000039742489   grpc源码学习笔记
+https://segmentfault.com/a/1190000039742489 grpc源码学习笔记
+https://lxkaka.wang/gprc-balancer/#balancer grpc的名称解析与负载均衡

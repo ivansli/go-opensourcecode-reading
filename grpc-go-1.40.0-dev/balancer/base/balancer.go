@@ -37,6 +37,7 @@ type baseBuilder struct {
 	config        Config
 }
 
+// 负载均衡器的 构造器 创建一个 负载均衡器
 func (bb *baseBuilder) Build(cc balancer.ClientConn, opt balancer.BuildOptions) balancer.Balancer {
 	bal := &baseBalancer{
 		cc:            cc,
@@ -51,6 +52,7 @@ func (bb *baseBuilder) Build(cc balancer.ClientConn, opt balancer.BuildOptions) 
 	// ErrNoSubConnAvailable, because when state of a SubConn changes, we
 	// may call UpdateState with this picker.
 	bal.picker = NewErrPicker(balancer.ErrNoSubConnAvailable)
+
 	return bal
 }
 
@@ -65,13 +67,24 @@ type subConnInfo struct {
 
 type baseBalancer struct {
 	cc            balancer.ClientConn
+
+	// Picker 的构建器
+	// type PickerBuilder interface {
+	//    Build(info PickerBuildInfo) balancer.Picker
+	// }
 	pickerBuilder PickerBuilder
 
 	csEvltr *balancer.ConnectivityStateEvaluator
 	state   connectivity.State
 
+	// 名称解析器给的所有的可用地址 的 连接信息与状态
 	subConns map[resolver.Address]subConnInfo // `attributes` is stripped from the keys of this map (the addresses)
 	scStates map[balancer.SubConn]connectivity.State
+
+	// type Picker interface {
+	//    Pick(info PickInfo) (PickResult, error)
+	// }
+	// 负载均衡器在选择某一个连接时 调用 picker 的 Pick 方法
 	picker   balancer.Picker
 	config   Config
 
@@ -97,15 +110,26 @@ func (b *baseBalancer) ResolverError(err error) {
 	})
 }
 
+// ！！！TODO 追代码
+// 使用 roundrobin 负载均衡时 在这里建立连接
+// 还会有其他负载均衡算法走到这里
 func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 	// TODO: handle s.ResolverState.ServiceConfig?
 	if logger.V(2) {
 		logger.Info("base.baseBalancer: got new ClientConn state: ", s)
 	}
+
 	// Successful resolution; clear resolver error and ensure we return nil.
+	// 成功的决议; 清除解析器错误并确保返回nil
 	b.resolverErr = nil
+
 	// addrsSet is the set converted from addrs, it's used for quick lookup of an address.
+	// addrsSet 是从 addrs 转换而来的集合，它用于快速查找地址
 	addrsSet := make(map[resolver.Address]struct{})
+
+	// TODO 追代码
+	// 对每一个地址建立一个连接
+	// 等invoke调用的时候，选取一个地址，然后获取它对应的连接直接使用
 	for _, a := range s.ResolverState.Addresses {
 		// Strip attributes from addresses before using them as map keys. So
 		// that when two addresses only differ in attributes pointers (but with
@@ -116,36 +140,65 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 		// duplicate connections to the same backend, it doesn't work. This is
 		// fine for now, because duplicate is done by setting Metadata today.
 		//
+		// 在使用地址作为映射键之前，先从地址中剥离属性
+		// 因此，当两个地址只是属性指针不同(但属性内容相同)时，它们被认为是相同的地址。
+		//
+		// 注意，这并不处理属性内容不同的情况。
+		// 因此，如果用户想要设置不同的属性来创建到同一后端的重复连接，它是不起作用的。
+		// 现在这样做很好，因为复制是通过今天设置Metadata完成的。
+		//
 		// TODO: read attributes to handle duplicate connections.
 		aNoAttrs := a
 		aNoAttrs.Attributes = nil
 		addrsSet[aNoAttrs] = struct{}{}
+
+		// aNoAttrs 对应的地址没建立连接，则需要使用conn建立连接
 		if scInfo, ok := b.subConns[aNoAttrs]; !ok {
 			// a is a new address (not existing in b.subConns).
+			// 是一个新的地址（不在b.subConns中存在）
 			//
 			// When creating SubConn, the original address with attributes is
 			// passed through. So that connection configurations in attributes
 			// (like creds) will be used.
+			//
+			// 在创建SubConn时，将传递带有属性的原始地址
+			// 因此，属性中的连接配置(如creds)将被使用
 			sc, err := b.cc.NewSubConn([]resolver.Address{a}, balancer.NewSubConnOptions{HealthCheckEnabled: b.config.HealthCheck})
 			if err != nil {
 				logger.Warningf("base.baseBalancer: failed to create new SubConn: %v", err)
 				continue
 			}
+
 			b.subConns[aNoAttrs] = subConnInfo{subConn: sc, attrs: a.Attributes}
 			b.scStates[sc] = connectivity.Idle
+
+			///////////////////////////////////////////////
+			// !!!核心
+			// 当前地址还没创建连接 conn，创建连接
+			//
+			// balancer_conn_wrappers.go 文件中
+			///////////////////////////////////////////////
 			sc.Connect()
 		} else {
+			// aNoAttrs上建立连接，则进行更新
+
 			// Always update the subconn's address in case the attributes
 			// changed.
 			//
 			// The SubConn does a reflect.DeepEqual of the new and old
 			// addresses. So this is a noop if the current address is the same
 			// as the old one (including attributes).
+			//
+			// 如果属性发生变化，总是更新子 subconn 的地址。
+			// SubConn 执行一个反射。新地址和旧地址的深度相等。
+			// 因此，如果当前地址与旧地址相同(包括属性)，那么这就是一个noop。
 			scInfo.attrs = a.Attributes
 			b.subConns[aNoAttrs] = scInfo
+
 			b.cc.UpdateAddresses(scInfo.subConn, []resolver.Address{a})
 		}
 	}
+
 	for a, scInfo := range b.subConns {
 		// a was removed by resolver.
 		if _, ok := addrsSet[a]; !ok {
@@ -153,12 +206,19 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 			delete(b.subConns, a)
 			// Keep the state of this sc in b.scStates until sc's state becomes Shutdown.
 			// The entry will be deleted in UpdateSubConnState.
+			//
+			// 将sc的状态保存在b.scStates中，直到sc的状态变为Shutdown
+			// 该条目将在UpdateSubConnState中删除
 		}
 	}
+
 	// If resolver state contains no addresses, return an error so ClientConn
 	// will trigger re-resolve. Also records this as an resolver error, so when
 	// the overall state turns transient failure, the error message will have
 	// the zero address information.
+	//
+	// 如果解析器状态不包含地址，返回一个错误，因此ClientConn将触发重新解析
+	// 还将此记录为解析器错误，因此当整体状态变为瞬态失败时，错误消息将具有零地址信息
 	if len(s.ResolverState.Addresses) == 0 {
 		b.ResolverError(errors.New("produced zero addresses"))
 		return balancer.ErrBadResolverState
@@ -252,6 +312,7 @@ func (b *baseBalancer) Close() {
 }
 
 // NewErrPicker returns a Picker that always returns err on Pick().
+// NewErrPicker 返回的Picker总是在Pick()上返回err
 func NewErrPicker(err error) balancer.Picker {
 	return &errPicker{err: err}
 }

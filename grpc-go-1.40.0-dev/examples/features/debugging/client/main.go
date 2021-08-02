@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"google.golang.org/grpc/balancer/roundrobin"
 	"log"
 	"net"
 	"os"
@@ -39,6 +40,9 @@ const (
 )
 
 func main() {
+	////////////////////////////////////////////////////
+	//  服务端逻辑
+	////////////////////////////////////////////////////
 	/***** Set up the server serving channelz service. *****/
 	lis, err := net.Listen("tcp", ":50052")
 	if err != nil {
@@ -50,15 +54,30 @@ func main() {
 	go s.Serve(lis)
 	defer s.Stop()
 
+	////////////////////////////////////////////////////
+	//  客户端逻辑
+	////////////////////////////////////////////////////
 	/***** Initialize manual resolver and Dial *****/
 	r := manual.NewBuilderWithScheme("whatever")
+
 	// Set up a connection to the server.
-	conn, err := grpc.Dial(r.Scheme()+":///test.server", grpc.WithInsecure(), grpc.WithResolvers(r), grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"round_robin"}`))
+	// 设置连接配置
+	conn, err := grpc.Dial(r.Scheme()+":///test.server",
+		grpc.WithInsecure(),
+		grpc.WithResolvers(r),
+
+		// grpc.WithBalancerName、grpc.WithDefaultServiceConfig 二选一
+		// 但是 grpc.WithBalancerName 将被弃用
+		grpc.WithBalancerName(roundrobin.Name),
+		grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"round_robin"}`),
+	)
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
 	}
 	defer conn.Close()
+
 	// Manually provide resolved addresses for the target.
+	// 手动为目标提供解析的地址
 	r.UpdateState(resolver.State{Addresses: []resolver.Address{{Addr: ":10001"}, {Addr: ":10002"}, {Addr: ":10003"}}})
 
 	c := pb.NewGreeterClient(conn)
@@ -72,8 +91,10 @@ func main() {
 	/***** Make 100 SayHello RPCs *****/
 	for i := 0; i < 100; i++ {
 		// Setting a 150ms timeout on the RPC.
+		// 设置请求超时时间
 		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 		defer cancel()
+
 		r, err := c.SayHello(ctx, &pb.HelloRequest{Name: name})
 		if err != nil {
 			log.Printf("could not greet: %v", err)

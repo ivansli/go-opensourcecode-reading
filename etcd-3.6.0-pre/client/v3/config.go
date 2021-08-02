@@ -65,6 +65,7 @@ type Config struct {
 	Password string `json:"password"`
 
 	// RejectOldCluster when set will refuse to create a client against an outdated cluster.
+	// 当设置时将拒绝在过时的集群上创建客户端
 	RejectOldCluster bool `json:"reject-old-cluster"`
 
 	// DialOptions is a list of dial options for the grpc client (e.g., for interceptors).

@@ -62,6 +62,8 @@ type Config struct {
 }
 
 // NewBalancerBuilder returns a base balancer builder configured by the provided config.
+//
+// NewBalancerBuilder 返回一个由所提供的配置配置的基本负载均衡器的构建器
 func NewBalancerBuilder(name string, pb PickerBuilder, config Config) balancer.Builder {
 	return &baseBuilder{
 		name:          name,

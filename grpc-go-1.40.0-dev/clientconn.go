@@ -180,7 +180,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	}
 
 	// 拦截器设置
-	// 如果存在多个拦截器，则只是用第一个拦截器
+	// 如果存在多个拦截器，则合并成一个拦截器调用链
 	chainUnaryClientInterceptors(cc)
 	chainStreamClientInterceptors(cc)
 
@@ -295,6 +295,8 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	}
 
 	// 延迟执行
+	// 在这里控制连接超时时间，
+	// 但如果没设置 grpc.WithBlock() 这里的超时控制基本没用
 	defer func() {
 		select {
 		// <-ctx.Done() 说明上下文已经超时取消了
@@ -366,6 +368,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	// 根据 cc.target 解析出来的 Scheme 来查找 名称解析器构建器(resolver.Builder)对象
 	//
 	// resolver.Builder 一般在init()中先于连接建立前注册到构建器的包全局对象中
+	// 获取 名称解析器构建器
 	resolverBuilder := cc.getResolver(cc.parsedTarget.Scheme)
 
 	// 名称解析器构建器对象 为空
@@ -397,7 +400,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		}
 	}
 
-	// 解析请求地址的 authority
+	// 解析请求地址的 authority(认证)
 	creds := cc.dopts.copts.TransportCredentials
 	if creds != nil && creds.Info().ServerName != "" {
 		cc.authority = creds.Info().ServerName
@@ -428,6 +431,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		}
 	}
 	if cc.dopts.scChan != nil {
+		// 启动新的协程来检测 sc 变化
 		go cc.scWatcher()
 	}
 
@@ -437,7 +441,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	}
 
 	// 负载均衡配置信息初始化
-	// 初始化 balancer
+	// 初始化 负载均衡器 options
 	cc.balancerBuildOpts = balancer.BuildOptions{
 		DialCreds:        credsClone,
 		CredsBundle:      cc.dopts.copts.CredsBundle,
@@ -508,32 +512,47 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 //
 // 合并一元拦截器
 func chainUnaryClientInterceptors(cc *ClientConn) {
+	// 多个拦截器组成的切片
 	interceptors := cc.dopts.chainUnaryInts
+
 	// Prepend dopts.unaryInt to the chaining interceptors if it exists, since unaryInt will
 	// be executed before any other chained interceptors.
+	//
+	// 合并多个拦截器， cc.dopts.unaryInt 作为第一个元素
 	if cc.dopts.unaryInt != nil {
 		interceptors = append([]UnaryClientInterceptor{cc.dopts.unaryInt}, interceptors...)
 	}
 
 	var chainedInt UnaryClientInterceptor
 	if len(interceptors) == 0 {
+		// 不存在拦截器
 		chainedInt = nil
 	} else if len(interceptors) == 1 {
+		//	一个拦截器
 		chainedInt = interceptors[0]
 	} else {
-		// 如果设置了多个拦截器，则取第一个
+		//////////////////////////////////////
+		// todo 追代码
+		// 如果设置了多个拦截器，则生成一个调用链
+		//////////////////////////////////////
 		chainedInt = func(ctx context.Context, method string, req, reply interface{}, cc *ClientConn, invoker UnaryInvoker, opts ...CallOption) error {
 			return interceptors[0](ctx, method, req, reply, cc, getChainUnaryInvoker(interceptors, 0, invoker), opts...)
 		}
 	}
+
 	cc.dopts.unaryInt = chainedInt
 }
 
 // getChainUnaryInvoker recursively generate the chained unary invoker.
+// 递归的生成 拦截器 调用链
 func getChainUnaryInvoker(interceptors []UnaryClientInterceptor, curr int, finalInvoker UnaryInvoker) UnaryInvoker {
+	// 是最后一个拦截器
 	if curr == len(interceptors)-1 {
 		return finalInvoker
 	}
+
+	// 通过 getChainUnaryInvoker 方法进行递归
+	// 递归的重点是 在  对curr+1传给下一次递归，当curr==拦截器长度，则就是最后一个
 	return func(ctx context.Context, method string, req, reply interface{}, cc *ClientConn, opts ...CallOption) error {
 		return interceptors[curr+1](ctx, method, req, reply, cc, getChainUnaryInvoker(interceptors, curr+1, finalInvoker), opts...)
 	}
@@ -808,11 +827,14 @@ func init() {
 	emptyServiceConfig = cfg.Config.(*ServiceConfig)
 }
 
+// ！！！
+// 根据配置信息 选择 创建 balancerWrapper 的方式
 func (cc *ClientConn) maybeApplyDefaultServiceConfig(addrs []resolver.Address) {
 	if cc.sc != nil {
 		cc.applyServiceConfigAndBalancer(cc.sc, nil, addrs)
 		return
 	}
+
 	if cc.dopts.defaultServiceConfig != nil {
 		cc.applyServiceConfigAndBalancer(cc.dopts.defaultServiceConfig, &defaultConfigSelector{cc.dopts.defaultServiceConfig}, addrs)
 	} else {
@@ -839,6 +861,9 @@ func (cc *ClientConn) updateResolverState(s resolver.State, err error) error {
 		// May need to apply the initial service config in case the resolver
 		// doesn't support service configs, or doesn't provide a service config
 		// with the new addresses.
+		//
+		// 可能需要应用初始服务配置的情况下，解析器不支持服务配置
+		// 或者不提供服务配置使用新的地址
 		cc.maybeApplyDefaultServiceConfig(nil)
 
 		if cc.balancerWrapper != nil {
@@ -851,10 +876,18 @@ func (cc *ClientConn) updateResolverState(s resolver.State, err error) error {
 	}
 
 	var ret error
+	////////////////////////////////////////////
+	// 创建 负载均衡器
+	////////////////////////////////////////////
 	if cc.dopts.disableServiceConfig || s.ServiceConfig == nil {
+		////////////////////////////////////////////
+		// 没有配置 service config
+		// !!! 创建 balancerWrapper
+		////////////////////////////////////////////
 		cc.maybeApplyDefaultServiceConfig(s.Addresses)
 		// TODO: do we need to apply a failing LB policy if there is no
 		// default, per the error handling design?
+		// 默认，根据错误处理设计?
 	} else {
 		if sc, ok := s.ServiceConfig.Config.(*ServiceConfig); s.ServiceConfig.Err == nil && ok {
 			configSelector := iresolver.GetConfigSelector(s)
@@ -865,6 +898,11 @@ func (cc *ClientConn) updateResolverState(s resolver.State, err error) error {
 			} else {
 				configSelector = &defaultConfigSelector{sc}
 			}
+
+			////////////////////////////////////////////
+			// ServiceConfig 配置了 Balancer
+			// 此时 cc 中已经获取到了对应的负载均衡器对象
+			////////////////////////////////////////////
 			cc.applyServiceConfigAndBalancer(sc, configSelector, s.Addresses)
 		} else {
 			ret = balancer.ErrBadResolverState
@@ -889,12 +927,18 @@ func (cc *ClientConn) updateResolverState(s resolver.State, err error) error {
 		balCfg = cc.sc.lbConfig.cfg
 	}
 
-	cbn := cc.curBalancerName
-	bw := cc.balancerWrapper
+	cbn := cc.curBalancerName // 负载均衡器名称
+	bw := cc.balancerWrapper  // 负载均衡器的包装对象
 	cc.mu.Unlock()
+
+	// 当前负载均衡器的名字 不是 grpclb
+	// 过滤掉 grpclb 负载均衡器的地址
 	if cbn != grpclbName {
 		// Filter any grpclb addresses since we don't have the grpclb balancer.
+		// 过滤掉 grpclb 负载均衡器的地址
 		for i := 0; i < len(s.Addresses); {
+			// 过滤掉  s.Addresses[i]
+			// TODO ！！！ 切片的裁剪方法值得学习
 			if s.Addresses[i].Type == resolver.GRPCLB {
 				copy(s.Addresses[i:], s.Addresses[i+1:])
 				s.Addresses = s.Addresses[:len(s.Addresses)-1]
@@ -906,7 +950,7 @@ func (cc *ClientConn) updateResolverState(s resolver.State, err error) error {
 
 	///////////////////////////////////////////////
 	// ！！！核心
-	// 更新conn状态
+	// 负载均衡器 开始 更新conn状态
 	///////////////////////////////////////////////
 	uccsErr := bw.updateClientConnState(&balancer.ClientConnState{ResolverState: s, BalancerConfig: balCfg})
 	if ret == nil {
@@ -924,6 +968,8 @@ func (cc *ClientConn) updateResolverState(s resolver.State, err error) error {
 // this function returns.
 //
 // Caller must hold cc.mu.
+//
+//  ！！！创建 ccBalancerWrapper
 func (cc *ClientConn) switchBalancer(name string) {
 	if strings.EqualFold(cc.curBalancerName, name) {
 		return
@@ -944,6 +990,7 @@ func (cc *ClientConn) switchBalancer(name string) {
 	}
 
 	builder := balancer.Get(name)
+	// 如果负载均衡器的构建器为空，则选择 pick_first
 	if builder == nil {
 		channelz.Warningf(logger, cc.channelzID, "Channel switches to new LB policy %q due to fallback from invalid balancer name", PickFirstBalancerName)
 		channelz.Infof(logger, cc.channelzID, "failed to get balancer builder for: %v, using pick_first instead", name)
@@ -952,7 +999,12 @@ func (cc *ClientConn) switchBalancer(name string) {
 		channelz.Infof(logger, cc.channelzID, "Channel switches to new LB policy %q", name)
 	}
 
+	// 如果是 roundrobin 则在 balancer/roundrobin/roundrobin.go文件中
+	// roundrobin 又使用了 balancer/base/base.go
+	//
+	// Balancer 名称
 	cc.curBalancerName = builder.Name()
+	// Balancer 对象
 	cc.balancerWrapper = newCCBalancerWrapper(cc, builder, cc.balancerBuildOpts)
 }
 
@@ -1171,7 +1223,11 @@ func (cc *ClientConn) healthCheckConfig() *healthCheckConfig {
 	return cc.sc.healthCheckConfig
 }
 
+// 负载均衡器 选择一个可用的连接
 func (cc *ClientConn) getTransport(ctx context.Context, failfast bool, method string) (transport.ClientTransport, func(balancer.DoneInfo), error) {
+	//////////////////////////////
+	// 负载均衡选择器 选择一个连接
+	//////////////////////////////
 	t, done, err := cc.blockingpicker.pick(ctx, failfast, balancer.PickInfo{
 		Ctx:            ctx,
 		FullMethodName: method,
@@ -1182,6 +1238,8 @@ func (cc *ClientConn) getTransport(ctx context.Context, failfast bool, method st
 	return t, done, nil
 }
 
+// ！！！ TODO 追
+// 创建 balancerWrapper
 func (cc *ClientConn) applyServiceConfigAndBalancer(sc *ServiceConfig, configSelector iresolver.ConfigSelector, addrs []resolver.Address) {
 	if sc == nil {
 		// should never reach here.
@@ -1204,32 +1262,56 @@ func (cc *ClientConn) applyServiceConfigAndBalancer(sc *ServiceConfig, configSel
 		cc.retryThrottler.Store((*retryThrottler)(nil))
 	}
 
+	////////////////////////////////////////////
+	// 创建 balancerWrapper
+	////////////////////////////////////////////
+
+	// 负载均衡器的构造器为空
 	if cc.dopts.balancerBuilder == nil {
 		// Only look at balancer types and switch balancer if balancer dial
 		// option is not set.
+		// 如果没有设置平衡器拨号选项，只查看平衡器类型和开关平衡器
+		//
+		// 负载均衡器名成
 		var newBalancerName string
+
+		// 从 config 中获取 负载均衡器，名称
 		if cc.sc != nil && cc.sc.lbConfig != nil {
 			newBalancerName = cc.sc.lbConfig.name
 		} else {
+			// config 没有 负载均衡器名称
 			var isGRPCLB bool
+
+			// 判断地址类型是否是 resolver.GRPCLB
 			for _, a := range addrs {
 				if a.Type == resolver.GRPCLB {
 					isGRPCLB = true
 					break
 				}
 			}
+
+			// 是 GRPCLB，则负载均衡器名称为 grpclbName
 			if isGRPCLB {
 				newBalancerName = grpclbName
 			} else if cc.sc != nil && cc.sc.LB != nil {
+				// 配置信息存在 负载均衡器名称
 				newBalancerName = *cc.sc.LB
 			} else {
+				////////////////////////////////
+				// 默认使用 pick_first Balancer
+				////////////////////////////////
 				newBalancerName = PickFirstBalancerName
 			}
 		}
+
+		// 听过负载均衡器名称 获取 负载均衡器的构造器
+		// 并对 cc.balancerWrapper  cc.curBalancerName 进行赋值
 		cc.switchBalancer(newBalancerName)
 	} else if cc.balancerWrapper == nil {
 		// Balancer dial option was set, and this is the first time handling
 		// resolved addresses. Build a balancer with dopts.balancerBuilder.
+		//
+		// 创建一个负载均衡器包装器对象
 		cc.curBalancerName = cc.dopts.balancerBuilder.Name()
 		cc.balancerWrapper = newCCBalancerWrapper(cc, cc.dopts.balancerBuilder, cc.balancerBuildOpts)
 	}

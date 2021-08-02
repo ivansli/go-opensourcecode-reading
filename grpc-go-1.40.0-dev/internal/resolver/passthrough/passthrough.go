@@ -49,6 +49,8 @@ type passthroughResolver struct {
 func (r *passthroughResolver) start() {
 	// !!! cc的UpdateState方法
 	// resolver_conn_wrapper.go文件中
+	//
+	// r.target.Endpoint 只是一个地址
 	r.cc.UpdateState(resolver.State{Addresses: []resolver.Address{{Addr: r.target.Endpoint}}})
 }
 

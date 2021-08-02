@@ -193,6 +193,7 @@ func newClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, meth
 	var newStream = func(ctx context.Context, done func()) (iresolver.ClientStream, error) {
 		// ！！！ TODO 追源码
 		// 重要 创建新的 stream
+		// 会从 负载均衡选择器中选择一个连接
 		//
 		// newClientStreamWithParams
 		return newClientStreamWithParams(ctx, desc, cc, method, mc, onCommit, done, opts...)
@@ -373,6 +374,10 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 	op := func(a *csAttempt) error { return a.newStream() }
 	// 重要
 	// 追源码 cs.withRetry， 创建stream，失败带有重试功能
+	///////////////////////////////////////////////////////
+	// ！！！ 重要
+	// 尝试 从 负载均衡器 选择一个可用连接
+	///////////////////////////////////////////////////////
 	if err := cs.withRetry(op, func() { cs.bufferForRetryLocked(0, op) }); err != nil {
 		cs.finish(err)
 		return nil, err
@@ -445,6 +450,10 @@ func (cs *clientStream) newAttemptLocked(sh stats.Handler, trInfo *traceInfo) (r
 			"content-type", grpcutil.ContentType(cs.callHdr.ContentSubtype),
 		))
 	}
+
+	///////////////////////////
+	// 获取一个连接
+	///////////////////////////
 	t, done, err := cs.cc.getTransport(ctx, cs.callInfo.failFast, cs.callHdr.Method)
 	if err != nil {
 		return err
@@ -692,6 +701,9 @@ func (cs *clientStream) shouldRetry(err error) error {
 }
 
 // Returns nil if a retry was performed and succeeded; error otherwise.
+//
+// 尝试锁定一个连接
+// 如果重试成功，返回nil;否则错误
 func (cs *clientStream) retryLocked(lastErr error) error {
 	for {
 		cs.attempt.finish(toRPCErr(lastErr))
@@ -699,7 +711,13 @@ func (cs *clientStream) retryLocked(lastErr error) error {
 			cs.commitAttemptLocked()
 			return err
 		}
+
 		cs.firstAttempt = false
+
+		//////////////////////////
+		// !!! 重要
+		// 获取一个连接
+		//////////////////////////
 		if err := cs.newAttemptLocked(nil, nil); err != nil {
 			return err
 		}
@@ -751,6 +769,11 @@ func (cs *clientStream) withRetry(op func(a *csAttempt) error, onSuccess func())
 			cs.mu.Unlock()
 			return err
 		}
+
+		/////////////////////////////
+		// !!! 重要
+		// 尝试获取一个连接
+		/////////////////////////////
 		if err := cs.retryLocked(err); err != nil {
 			cs.mu.Unlock()
 			return err

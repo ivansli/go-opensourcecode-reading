@@ -31,8 +31,12 @@ import (
 
 var (
 	// m is a map from scheme to resolver builder.
+	//
+	// m 是一个从 scheme 到解析器构建器的映射
 	m = make(map[string]Builder)
+
 	// defaultScheme is the default scheme to use.
+	// default scheme
 	defaultScheme = "passthrough"
 )
 
@@ -93,6 +97,7 @@ const (
 )
 
 // Address represents a server the client connects to.
+// Address 表示客户端连接到的服务器
 //
 // Experimental
 //
@@ -100,6 +105,7 @@ const (
 // later release.
 type Address struct {
 	// Addr is the server address on which a connection will be established.
+	// Addr 是要在其上建立连接的服务器地址
 	Addr string
 
 	// ServerName is the name of this address.
@@ -113,6 +119,8 @@ type Address struct {
 	// WARNING: ServerName must only be populated with trusted values. It
 	// is insecure to populate it with data from untrusted inputs since untrusted
 	// values could be used to bypass the authority checks performed by TLS.
+	//
+	// 地址的名称
 	ServerName string
 
 	// Attributes contains arbitrary data about this address intended for
@@ -158,8 +166,12 @@ type BuildOptions struct {
 }
 
 // State contains the current Resolver state relevant to the ClientConn.
+//
+// State 包含与ClientConn相关的当前解析器状态
 type State struct {
 	// Addresses is the latest set of resolved addresses for the target.
+	//
+	// Addresses 是目标的最新解析地址集
 	Addresses []Address
 
 	// ServiceConfig contains the result from parsing the latest service
@@ -169,11 +181,14 @@ type State struct {
 
 	// Attributes contains arbitrary data about the resolver intended for
 	// consumption by the load balancing policy.
+	//
+	// 属性包含关于负载平衡策略使用的解析器的任意数据
 	Attributes *attributes.Attributes
 }
 
 // ClientConn contains the callbacks for resolver to notify any updates
 // to the gRPC ClientConn.
+// ClientConn 包含一个回调函数，用于通知任何对gRPC ClientConn的更新
 //
 // This interface is to be implemented by gRPC. Users should not need a
 // brand new implementation of this interface. For the situations like
@@ -182,21 +197,25 @@ type State struct {
 type ClientConn interface {
 	// UpdateState updates the state of the ClientConn appropriately.
 	UpdateState(State) error
+
 	// ReportError notifies the ClientConn that the Resolver encountered an
 	// error.  The ClientConn will notify the load balancer and begin calling
 	// ResolveNow on the Resolver with exponential backoff.
 	ReportError(error)
+
 	// NewAddress is called by resolver to notify ClientConn a new list
 	// of resolved addresses.
 	// The address list should be the complete list of resolved addresses.
 	//
 	// Deprecated: Use UpdateState instead.
 	NewAddress(addresses []Address)
+
 	// NewServiceConfig is called by resolver to notify ClientConn a new
 	// service config. The service config should be provided as a json string.
 	//
 	// Deprecated: Use UpdateState instead.
 	NewServiceConfig(serviceConfig string)
+
 	// ParseServiceConfig parses the provided service config and returns an
 	// object that provides the parsed config.
 	ParseServiceConfig(serviceConfigJSON string) *serviceconfig.ParseResult
@@ -226,28 +245,46 @@ type Target struct {
 }
 
 // Builder creates a resolver that will be used to watch name resolution updates.
+//
+// 生成器(Builder) 创建一个解析器，该解析器将用于监视名称解析更新
+//
+// 名称解析器构建器
 type Builder interface {
 	// Build creates a new resolver for the given target.
+	// 通过给定的目标创建一个解析器
 	//
 	// gRPC dial calls Build synchronously, and fails if the returned error is
 	// not nil.
+	//
+	// gRPC拨号同步调用Build，如果返回的错误不为nil则失败
 	Build(target Target, cc ClientConn, opts BuildOptions) (Resolver, error)
+
 	// Scheme returns the scheme supported by this resolver.
 	// Scheme is defined at https://github.com/grpc/grpc/blob/master/doc/naming.md.
 	Scheme() string
 }
 
 // ResolveNowOptions includes additional information for ResolveNow.
+//
+// ResolveNowOptions 包括 ResolveNow 的其他信息
 type ResolveNowOptions struct{}
 
 // Resolver watches for the updates on the specified target.
 // Updates include address updates and service config updates.
+//
+// 名称解析器
+// 监听指定目标地址的更新操作
+// 更新包括 地址更新 以及 service config 更新
 type Resolver interface {
 	// ResolveNow will be called by gRPC to try to resolve the target name
 	// again. It's just a hint, resolver can ignore this if it's not necessary.
 	//
 	// It could be called multiple times concurrently.
+	//
+	// ResolveNow将被gRPC调用以尝试再次解析目标名称
+	// 这只是一个提示，如果没有必要，解析器可以忽略它。它可以同时被多次调用
 	ResolveNow(ResolveNowOptions)
+
 	// Close closes the resolver.
 	Close()
 }

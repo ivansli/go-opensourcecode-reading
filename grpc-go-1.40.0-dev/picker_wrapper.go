@@ -32,6 +32,9 @@ import (
 
 // pickerWrapper is a wrapper of balancer.Picker. It blocks on certain pick
 // actions and unblock when there's a picker update.
+//
+// pickerWrapper是balancer.Picker的包装器
+// 它在特定的选择操作上阻塞，当有选择器更新时解除阻塞。
 type pickerWrapper struct {
 	mu         sync.Mutex
 	done       bool
@@ -75,7 +78,7 @@ func doneChannelzWrapper(acw *acBalancerWrapper, done func(balancer.DoneInfo)) f
 }
 
 // pick returns the transport that will be used for the RPC.
-// 返回将用于RPC的传输
+// 负载均衡器的选择方法 用来选择一个可用的连接 返回将用于RPC的传输
 //
 // It may block in the following cases:
 // - there's no picker
@@ -122,9 +125,18 @@ func (pw *pickerWrapper) pick(ctx context.Context, failfast bool, info balancer.
 		}
 
 		ch = pw.blockingCh
+
+		// 负载均衡选择器的选择方法
 		p := pw.picker
 		pw.mu.Unlock()
 
+		/////////////////////////////////////
+		// ！！！
+		// 负载均衡选择器选择一个可用连接
+		/////////////////////////////////////
+
+		// 例如 roundrobin 的 pick 方法
+		// balancer/roundrobin/roundrobin.go
 		pickResult, err := p.Pick(info)
 
 		if err != nil {
@@ -155,6 +167,7 @@ func (pw *pickerWrapper) pick(ctx context.Context, failfast bool, info balancer.
 			}
 			return t, pickResult.Done, nil
 		}
+
 		if pickResult.Done != nil {
 			// Calling done with nil error, no bytes sent and no bytes received.
 			// DoneInfo with default value works.

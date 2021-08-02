@@ -62,7 +62,7 @@ func newCCResolverWrapper(cc *ClientConn, rb resolver.Builder) (*ccResolverWrapp
 		credsClone = creds.Clone()
 	}
 
-	// 构建器选项
+	// 名称解析器的构建器选项
 	rbo := resolver.BuildOptions{
 		DisableServiceConfig: cc.dopts.disableServiceConfig,
 		DialCreds:            credsClone,
@@ -75,6 +75,8 @@ func newCCResolverWrapper(cc *ClientConn, rb resolver.Builder) (*ccResolverWrapp
 	// to guard against a data race caused by the following code path,
 	// rb.Build-->ccr.ReportError-->ccr.poll-->ccr.resolveNow, would end up
 	// accessing ccr.resolver which is being assigned here.
+	//
+	// 在给 ccr.resolver 赋值的时候，我们应该为了防止数据竞争予以加锁保护
 	ccr.resolverMu.Lock()
 	defer ccr.resolverMu.Unlock()
 
@@ -91,6 +93,7 @@ func newCCResolverWrapper(cc *ClientConn, rb resolver.Builder) (*ccResolverWrapp
 	// 2. 调用 conn 的 go-opensourcecode-read/grpc-go/clientconn.go 的 UpdateState()方法
 	// 	  把地址列表 resolver.State 更新到 cc 的 负载均衡对象 balancer.ClientConnState 中
 	///////////////////////////////////////////////////////////////////////
+	// 这里的 Build 调用的是名称解析器构建器的 Build 方法
 	ccr.resolver, err = rb.Build(cc.parsedTarget, ccr, rbo)
 
 	if err != nil {
@@ -115,6 +118,8 @@ func (ccr *ccResolverWrapper) close() {
 }
 
 // ！！！更新状态，包含建立连接的逻辑
+//
+// s resolver.State : 为解析器解析出来的所有可用地址
 func (ccr *ccResolverWrapper) UpdateState(s resolver.State) error {
 	ccr.incomingMu.Lock()
 	defer ccr.incomingMu.Unlock()
@@ -133,6 +138,9 @@ func (ccr *ccResolverWrapper) UpdateState(s resolver.State) error {
 
 	// ！！！核心
 	// 更新状态并建立连接
+	//
+	// clientconn.go 中 updateResolverState 方法
+	// ccr.curState 包含所有解析出来的服务端地址列表
 	if err := ccr.cc.updateResolverState(ccr.curState, nil); err == balancer.ErrBadResolverState {
 		return balancer.ErrBadResolverState
 	}

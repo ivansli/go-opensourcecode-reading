@@ -167,6 +167,8 @@ func main() {
 	conn, err := grpc.Dial(*addr, grpc.WithTransportCredentials(creds),
 		// 一元拦截器
 		grpc.WithUnaryInterceptor(unaryInterceptor),
+		// 一次性注册多个拦截器
+		//grpc.WithChainUnaryInterceptor(unaryInterceptor, unaryInterceptor),
 		// 流式拦截器
 		grpc.WithStreamInterceptor(streamInterceptor),
 		grpc.WithBlock(),
