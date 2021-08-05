@@ -408,6 +408,11 @@ func WithTimeout(d time.Duration) DialOption {
 // connections. If FailOnNonTempDialError() is set to true, and an error is
 // returned by f, gRPC checks the error's Temporary() method to decide if it
 // should try to reconnect to the network address.
+//
+// WithContextDialer返回一个DialOption
+// 用于设置一个dialer来创建连接
+// 如果FailOnNonTempDialError()设置为true，并且f返回一个错误
+// gRPC检查错误的Temporary()方法来决定它是否应该尝试重新连接到网络地址
 func WithContextDialer(f func(context.Context, string) (net.Conn, error)) DialOption {
 	return newFuncDialOption(func(o *dialOptions) {
 		o.copts.Dialer = f
@@ -425,6 +430,8 @@ func init() {
 //
 // Deprecated: use WithContextDialer instead.  Will be supported throughout
 // 1.x.
+//
+// 将被弃用
 func WithDialer(f func(string, time.Duration) (net.Conn, error)) DialOption {
 	return WithContextDialer(
 		func(ctx context.Context, addr string) (net.Conn, error) {

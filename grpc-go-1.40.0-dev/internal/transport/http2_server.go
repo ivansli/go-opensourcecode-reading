@@ -128,19 +128,29 @@ type http2Server struct {
 // NewServerTransport creates a http2 transport with conn and configuration
 // options from config.
 //
+// 通过 conn 和 config 的配置选项创建 http2 的 transport
+//
 // It returns a non-nil transport and a nil error on success. On failure, it
 // returns a non-nil transport and a nil-error. For a special case where the
 // underlying conn gets closed before the client preface could be read, it
 // returns a nil transport and a nil error.
 func NewServerTransport(conn net.Conn, config *ServerConfig) (_ ServerTransport, err error) {
+	// 读写buffer大小
 	writeBufSize := config.WriteBufferSize
 	readBufSize := config.ReadBufferSize
+
+	// 头部list大小
 	maxHeaderListSize := defaultServerMaxHeaderListSize
 	if config.MaxHeaderListSize != nil {
 		maxHeaderListSize = *config.MaxHeaderListSize
 	}
+
+	// 创建从conn生成的 可用于读写的 framer
 	framer := newFramer(conn, writeBufSize, readBufSize, maxHeaderListSize)
+
 	// Send initial settings as connection preface to client.
+	//
+	// 发送初始化的 SETTING 设置信息 作为与客户端的连接序言
 	isettings := []http2.Setting{{
 		ID:  http2.SettingMaxFrameSize,
 		Val: http2MaxFrameLen,
@@ -156,6 +166,7 @@ func NewServerTransport(conn net.Conn, config *ServerConfig) (_ ServerTransport,
 			Val: maxStreams,
 		})
 	}
+
 	dynamicWindow := true
 	iwz := int32(initialWindowSize)
 	if config.InitialWindowSize >= defaultWindowSize {
@@ -184,15 +195,22 @@ func NewServerTransport(conn net.Conn, config *ServerConfig) (_ ServerTransport,
 			Val: *config.HeaderTableSize,
 		})
 	}
+
+	// 写 SETTING帧 数据到 fr
+	// 此时可能是暂存在缓冲中，缓冲区数据超过缓冲大小 或 flush之后才发送
 	if err := framer.fr.WriteSettings(isettings...); err != nil {
 		return nil, connectionErrorf(false, err, "transport: %v", err)
 	}
+
 	// Adjust the connection flow control window if needed.
+	// 调整流控制窗口大小
 	if delta := uint32(icwz - defaultWindowSize); delta > 0 {
 		if err := framer.fr.WriteWindowUpdate(0, delta); err != nil {
 			return nil, connectionErrorf(false, err, "transport: %v", err)
 		}
 	}
+
+	// 长连接数据
 	kp := config.KeepaliveParams
 	if kp.MaxConnectionIdle == 0 {
 		kp.MaxConnectionIdle = defaultMaxConnectionIdle
@@ -211,34 +229,38 @@ func NewServerTransport(conn net.Conn, config *ServerConfig) (_ ServerTransport,
 	if kp.Timeout == 0 {
 		kp.Timeout = defaultServerKeepaliveTimeout
 	}
+
+	// 长连接策略
 	kep := config.KeepalivePolicy
 	if kep.MinTime == 0 {
 		kep.MinTime = defaultKeepalivePolicyMinTime
 	}
+
 	done := make(chan struct{})
 	t := &http2Server{
 		ctx:               context.Background(),
 		done:              done,
-		conn:              conn,
-		remoteAddr:        conn.RemoteAddr(),
-		localAddr:         conn.LocalAddr(),
+		conn:              conn, // 与客户端建立的连接
+		remoteAddr:        conn.RemoteAddr(), // 远端地址
+		localAddr:         conn.LocalAddr(), // 本地地址
 		authInfo:          config.AuthInfo,
-		framer:            framer,
-		readerDone:        make(chan struct{}),
+		framer:            framer, // 用于读写的 framer
+		readerDone:        make(chan struct{}), // 通知读完成的 chan
 		writerDone:        make(chan struct{}),
-		maxStreams:        maxStreams,
+		maxStreams:        maxStreams, // stream id 的最大值
 		inTapHandle:       config.InTapHandle,
 		fc:                &trInFlow{limit: uint32(icwz)},
 		state:             reachable,
 		activeStreams:     make(map[uint32]*Stream),
 		stats:             config.StatsHandler,
-		kp:                kp,
+		kp:                kp, // 长连接配置信息
 		idle:              time.Now(),
-		kep:               kep,
+		kep:               kep, // 长连接策略
 		initialWindowSize: iwz,
 		czData:            new(channelzData),
 		bufferPool:        newBufferPool(),
 	}
+
 	t.controlBuf = newControlBuffer(t.done)
 	if dynamicWindow {
 		t.bdpEst = &bdpEstimator{
@@ -246,20 +268,25 @@ func NewServerTransport(conn net.Conn, config *ServerConfig) (_ ServerTransport,
 			updateFlowControl: t.updateFlowControl,
 		}
 	}
+
 	if t.stats != nil {
 		t.ctx = t.stats.TagConn(t.ctx, &stats.ConnTagInfo{
 			RemoteAddr: t.remoteAddr,
 			LocalAddr:  t.localAddr,
 		})
+
 		connBegin := &stats.ConnBegin{}
 		t.stats.HandleConn(t.ctx, connBegin)
 	}
+
 	if channelz.IsOn() {
 		t.channelzID = channelz.RegisterNormalSocket(t, config.ChannelzParentID, fmt.Sprintf("%s -> %s", t.remoteAddr, t.localAddr))
 	}
 
+	// 服务端连接计数原子+1，作为当前连接id
 	t.connectionID = atomic.AddUint64(&serverConnectionCounter, 1)
 
+	// 立刻发送上面的 framer 帧数据
 	t.framer.writer.Flush()
 
 	defer func() {
@@ -269,6 +296,7 @@ func NewServerTransport(conn net.Conn, config *ServerConfig) (_ ServerTransport,
 	}()
 
 	// Check the validity of client preface.
+	// 检查校验 序言数据
 	preface := make([]byte, len(clientPreface))
 	if _, err := io.ReadFull(t.conn, preface); err != nil {
 		// In deployments where a gRPC server runs behind a cloud load balancer
@@ -280,10 +308,12 @@ func NewServerTransport(conn net.Conn, config *ServerConfig) (_ ServerTransport,
 		}
 		return nil, connectionErrorf(false, err, "transport: http2Server.HandleStreams failed to receive the preface from client: %v", err)
 	}
+	// 序言数据是否跟客户端序言一致
 	if !bytes.Equal(preface, clientPreface) {
 		return nil, connectionErrorf(false, nil, "transport: http2Server.HandleStreams received bogus greeting from client: %q", preface)
 	}
 
+	// 读取 数据帧
 	frame, err := t.framer.fr.ReadFrame()
 	if err == io.EOF || err == io.ErrUnexpectedEOF {
 		return nil, err
@@ -291,11 +321,16 @@ func NewServerTransport(conn net.Conn, config *ServerConfig) (_ ServerTransport,
 	if err != nil {
 		return nil, connectionErrorf(false, err, "transport: http2Server.HandleStreams failed to read initial settings frame: %v", err)
 	}
+
+	// 最后一次读取时间
 	atomic.StoreInt64(&t.lastRead, time.Now().UnixNano())
+
+	// 判断是否是设置帧
 	sf, ok := frame.(*http2.SettingsFrame)
 	if !ok {
 		return nil, connectionErrorf(false, nil, "transport: http2Server.HandleStreams saw invalid preface type %T from client", frame)
 	}
+	// 处理设置信息
 	t.handleSettings(sf)
 
 	go func() {
@@ -306,11 +341,15 @@ func NewServerTransport(conn net.Conn, config *ServerConfig) (_ ServerTransport,
 				logger.Errorf("transport: loopyWriter.run returning. Err: %v", err)
 			}
 		}
+
 		t.conn.Close()
 		t.controlBuf.finish()
 		close(t.writerDone)
 	}()
+
+	// 通过另启动一个goroutine来进行长连接保活
 	go t.keepalive()
+
 	return t, nil
 }
 
@@ -1036,15 +1075,20 @@ func (t *http2Server) Write(s *Stream, hdr []byte, data []byte, opts *Options) e
 // after an additional duration of keepalive.Timeout.
 func (t *http2Server) keepalive() {
 	p := &ping{}
+
 	// True iff a ping has been sent, and no data has been received since then.
 	outstandingPing := false
+
 	// Amount of time remaining before which we should receive an ACK for the
 	// last sent ping.
 	kpTimeoutLeft := time.Duration(0)
+
 	// Records the last value of t.lastRead before we go block on the timer.
 	// This is required to check for read activity since then.
 	prevNano := time.Now().UnixNano()
+
 	// Initialize the different timers to their default values.
+	// 通过默认值初始化不同的定时器
 	idleTimer := time.NewTimer(t.kp.MaxConnectionIdle)
 	ageTimer := time.NewTimer(t.kp.MaxConnectionAge)
 	kpTimer := time.NewTimer(t.kp.Time)
@@ -1059,7 +1103,7 @@ func (t *http2Server) keepalive() {
 
 	for {
 		select {
-		case <-idleTimer.C:
+		case <-idleTimer.C: // 空闲定时器
 			t.mu.Lock()
 			idle := t.idle
 			if idle.IsZero() { // The connection is non-idle.
@@ -1067,6 +1111,7 @@ func (t *http2Server) keepalive() {
 				idleTimer.Reset(t.kp.MaxConnectionIdle)
 				continue
 			}
+
 			val := t.kp.MaxConnectionIdle - time.Since(idle)
 			t.mu.Unlock()
 			if val <= 0 {
@@ -1075,6 +1120,7 @@ func (t *http2Server) keepalive() {
 				t.Drain()
 				return
 			}
+
 			idleTimer.Reset(val)
 		case <-ageTimer.C:
 			t.Drain()
@@ -1089,7 +1135,7 @@ func (t *http2Server) keepalive() {
 			case <-t.done:
 			}
 			return
-		case <-kpTimer.C:
+		case <-kpTimer.C: // 在指定时间没看到客户端活跃，则发送ping数据帧
 			lastRead := atomic.LoadInt64(&t.lastRead)
 			if lastRead > prevNano {
 				// There has been read activity since the last time we were
@@ -1100,6 +1146,7 @@ func (t *http2Server) keepalive() {
 				prevNano = lastRead
 				continue
 			}
+
 			if outstandingPing && kpTimeoutLeft <= 0 {
 				if logger.V(logLevel) {
 					logger.Infof("transport: closing server transport due to idleness.")
@@ -1107,6 +1154,7 @@ func (t *http2Server) keepalive() {
 				t.Close()
 				return
 			}
+
 			if !outstandingPing {
 				if channelz.IsOn() {
 					atomic.AddInt64(&t.czData.kpCount, 1)
@@ -1122,7 +1170,7 @@ func (t *http2Server) keepalive() {
 			sleepDuration := minTime(t.kp.Time, kpTimeoutLeft)
 			kpTimeoutLeft -= sleepDuration
 			kpTimer.Reset(sleepDuration)
-		case <-t.done:
+		case <-t.done: // 已经关闭，退出
 			return
 		}
 	}
@@ -1220,12 +1268,14 @@ func (t *http2Server) RemoteAddr() net.Addr {
 	return t.remoteAddr
 }
 
+
 func (t *http2Server) Drain() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.drainChan != nil {
 		return
 	}
+
 	t.drainChan = make(chan struct{})
 	t.controlBuf.put(&goAway{code: http2.ErrCodeNo, debugData: []byte{}, headsUp: true})
 }

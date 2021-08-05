@@ -23,6 +23,9 @@ import (
 	"context"
 	"log"
 	"net"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"google.golang.org/grpc"
 	pb "google.golang.org/grpc/examples/helloworld/helloworld"
@@ -63,5 +66,16 @@ func main() {
 	// 开始对外提供服务
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
+	}
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT)
+
+	for {
+		select {
+		case <-sig:
+			// 优雅退出
+			s.GracefulStop()
+		}
 	}
 }

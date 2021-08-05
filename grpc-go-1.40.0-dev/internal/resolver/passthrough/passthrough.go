@@ -26,6 +26,14 @@ const scheme = "passthrough"
 
 type passthroughBuilder struct{}
 
+
+// NewBuilder creates a passthrough Builder which is used to passthrough  resolvers.
+// 创建名称解析器 的 构造器对象
+// 这里是自己添加的
+func NewBuilder() resolver.Builder {
+	return &passthroughBuilder{}
+}
+
 func (*passthroughBuilder) Build(target resolver.Target, cc resolver.ClientConn, opts resolver.BuildOptions) (resolver.Resolver, error) {
 	r := &passthroughResolver{
 		target: target,

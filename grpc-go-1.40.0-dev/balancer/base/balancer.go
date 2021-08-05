@@ -39,6 +39,8 @@ type baseBuilder struct {
 
 // 负载均衡器的 构造器 创建一个 负载均衡器
 func (bb *baseBuilder) Build(cc balancer.ClientConn, opt balancer.BuildOptions) balancer.Balancer {
+	// cc 为负载均衡包装器，被包含在了 负载均衡器 中
+	// cc 为 balancer_conn_wrappers.go 的 ccBalancerWrapper 结构体
 	bal := &baseBalancer{
 		cc:            cc,
 		pickerBuilder: bb.pickerBuilder,
@@ -66,7 +68,7 @@ type subConnInfo struct {
 }
 
 type baseBalancer struct {
-	cc            balancer.ClientConn
+	cc balancer.ClientConn
 
 	// Picker 的构建器
 	// type PickerBuilder interface {
@@ -85,8 +87,8 @@ type baseBalancer struct {
 	//    Pick(info PickInfo) (PickResult, error)
 	// }
 	// 负载均衡器在选择某一个连接时 调用 picker 的 Pick 方法
-	picker   balancer.Picker
-	config   Config
+	picker balancer.Picker
+	config Config
 
 	resolverErr error // the last error reported by the resolver; cleared on successful resolution
 	connErr     error // the last connection error; cleared upon leaving TransientFailure
@@ -111,8 +113,11 @@ func (b *baseBalancer) ResolverError(err error) {
 }
 
 // ！！！TODO 追代码
-// 使用 roundrobin 负载均衡时 在这里建立连接
-// 还会有其他负载均衡算法走到这里
+// 使用 roundrobin 负载均衡器时 在这里 不仅建立连接，还针对不同地址建立的连接进行状态更新
+// 还会有其他负载均衡算法
+//
+// 最终 创建的连接 存储在 b.subConns 对象中
+// 在真正请求远端时，由负载均衡器来 选择(pick) 一个连接
 func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 	// TODO: handle s.ResolverState.ServiceConfig?
 	if logger.V(2) {
@@ -120,7 +125,7 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 	}
 
 	// Successful resolution; clear resolver error and ensure we return nil.
-	// 成功的决议; 清除解析器错误并确保返回nil
+	// 清除解析器错误并确保返回 nil
 	b.resolverErr = nil
 
 	// addrsSet is the set converted from addrs, it's used for quick lookup of an address.
@@ -148,12 +153,22 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 		// 现在这样做很好，因为复制是通过今天设置Metadata完成的。
 		//
 		// TODO: read attributes to handle duplicate connections.
+		//
+		// Attributes 属性置空的 address 信息
+		//
+		// 注意：
+		// 	最开始对应地址的连接信息不存在时，Attributes 设置为空
+		//  当后面再次执行本方法来更新conn状态时，如果地址存在对应连接。则只更新 Attributes 信息
 		aNoAttrs := a
 		aNoAttrs.Attributes = nil
 		addrsSet[aNoAttrs] = struct{}{}
 
 		// aNoAttrs 对应的地址没建立连接，则需要使用conn建立连接
+		// b.subConns[aNoAttrs]
+		//    表示从负载均衡器的 subConns 的 map中查看是否已经存在 该地址的连接信息
+		//
 		if scInfo, ok := b.subConns[aNoAttrs]; !ok {
+			// 不存在，则创建
 			// a is a new address (not existing in b.subConns).
 			// 是一个新的地址（不在b.subConns中存在）
 			//
@@ -163,6 +178,15 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 			//
 			// 在创建SubConn时，将传递带有属性的原始地址
 			// 因此，属性中的连接配置(如creds)将被使用
+
+			// 对每一个还没建立连接信息的 地址创建 SubConn 对象，保存连接信息
+			//
+			// b.cc 为  balancer.ClientConn 接口类型
+			//
+			// b 为 负载均衡器，b.cc 为 负载均衡器的包装器
+			// 		即：balancer_conn_wrappers.go 中 ccBalancerWrapper 结构体
+
+			// sc 为 balancer_conn_wrappers.go 中 addrConn 对象的 包装对象 acBalancerWrapper
 			sc, err := b.cc.NewSubConn([]resolver.Address{a}, balancer.NewSubConnOptions{HealthCheckEnabled: b.config.HealthCheck})
 			if err != nil {
 				logger.Warningf("base.baseBalancer: failed to create new SubConn: %v", err)
@@ -178,6 +202,9 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 			//
 			// balancer_conn_wrappers.go 文件中
 			///////////////////////////////////////////////
+			// 调用 acBalancerWrapper 的 Connect 方法， 即 最终是 addrConn 的 conn 方法
+
+			// addrConn 对应的连接状态 一直由一个新的协程来维持
 			sc.Connect()
 		} else {
 			// aNoAttrs上建立连接，则进行更新
@@ -195,10 +222,14 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 			scInfo.attrs = a.Attributes
 			b.subConns[aNoAttrs] = scInfo
 
+			// TODO 追源码
 			b.cc.UpdateAddresses(scInfo.subConn, []resolver.Address{a})
 		}
 	}
 
+	// ！！！！
+	// b.subConns 可能存在 就得已经下掉的地址，所以这里进行判断
+	// 如果 地址已经下掉，则 从 b.subConns 中移除
 	for a, scInfo := range b.subConns {
 		// a was removed by resolver.
 		if _, ok := addrsSet[a]; !ok {
@@ -217,7 +248,7 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 	// the overall state turns transient failure, the error message will have
 	// the zero address information.
 	//
-	// 如果解析器状态不包含地址，返回一个错误，因此ClientConn将触发重新解析
+	// 如果解析器状态不包含地址(没有可用地址)，返回一个错误，因此ClientConn将触发重新解析
 	// 还将此记录为解析器错误，因此当整体状态变为瞬态失败时，错误消息将具有零地址信息
 	if len(s.ResolverState.Addresses) == 0 {
 		b.ResolverError(errors.New("produced zero addresses"))

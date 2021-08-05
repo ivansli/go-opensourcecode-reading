@@ -73,6 +73,8 @@ func getClientConn(ctx context.Context, serviceName string, opts []grpc.DialOpti
 	opts = append(opts, grpc.WithBlock(),
 		// 设置负载均衡器
 		grpc.WithBalancer(grpc.RoundRobin(r)),
+
+		//grpc.WithDefaultServiceConfig(),
 		grpc.WithInsecure(),
 	)
 

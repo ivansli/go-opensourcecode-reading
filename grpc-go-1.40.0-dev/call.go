@@ -86,15 +86,23 @@ func Invoke(ctx context.Context, method string, args, reply interface{}, cc *Cli
 var unaryStreamDesc = &StreamDesc{ServerStreams: false, ClientStreams: false}
 
 func invoke(ctx context.Context, method string, req, reply interface{}, cc *ClientConn, opts ...CallOption) error {
-	// newClientStream 创建新的stream
+	///////////////////////////////////////////////////
+	// newClientStream 创建新的 英语数据交互的 stream 流
 	// TODO 追源码
+	///////////////////////////////////////////////////
+
+	// method 就是请求远端的方法
+	// cc grpc.ClientConn
 	cs, err := newClientStream(ctx, unaryStreamDesc, cc, method, opts...)
 	if err != nil {
 		return err
 	}
 
+	// req 入参
 	if err := cs.SendMsg(req); err != nil {
 		return err
 	}
+
+	// reply 远端返回结果
 	return cs.RecvMsg(reply)
 }

@@ -54,22 +54,36 @@ type ServerParameters struct {
 	// idle connection would be closed by sending a GoAway. Idleness duration is
 	// defined since the most recent time the number of outstanding RPCs became
 	// zero or the connection establishment.
+	//
+	// MaxConnectionIdle是一个持续的时间，在此时间之后
+	// 一个空闲的连接将被发送超时关闭
+	// idle持续时间定义自最近未完成rpc的数量变为零或连接建立时起
 	MaxConnectionIdle time.Duration // The current default value is infinity.
+
 	// MaxConnectionAge is a duration for the maximum amount of time a
 	// connection may exist before it will be closed by sending a GoAway. A
 	// random jitter of +/-10% will be added to MaxConnectionAge to spread out
 	// connection storms.
 	MaxConnectionAge time.Duration // The current default value is infinity.
+
 	// MaxConnectionAgeGrace is an additive period after MaxConnectionAge after
 	// which the connection will be forcibly closed.
 	MaxConnectionAgeGrace time.Duration // The current default value is infinity.
+
 	// After a duration of this time if the server doesn't see any activity it
 	// pings the client to see if the transport is still alive.
 	// If set below 1s, a minimum value of 1s will be used instead.
+	//
+	// 在这段时间之后，如果服务器没有看到任何活动
+	// 它就会ping客户机以查看传输是否仍然处于活动状态。如果设置在1s以下，则使用最小值1s
 	Time time.Duration // The current default value is 2 hours.
+
 	// After having pinged for keepalive check, the server waits for a duration
 	// of Timeout and if no activity is seen even after that the connection is
 	// closed.
+	//
+	// 在ping了keepalive检查之后
+	// 服务器将等待Timeout，如果在此之后没有看到任何活动，则连接将关闭
 	Timeout time.Duration // The current default value is 20 seconds.
 }
 

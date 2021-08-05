@@ -118,7 +118,6 @@ func main() {
 // }
 ///////////////////////////////////////////////////////////////////////
 
-
 // Following is an example name resolver. It includes a
 // ResolverBuilder(https://godoc.org/google.golang.org/grpc/resolver#Builder)
 // and a Resolver(https://godoc.org/google.golang.org/grpc/resolver#Resolver).
@@ -159,7 +158,7 @@ func (*exampleResolverBuilder) Build(target resolver.Target, cc resolver.ClientC
 		cc:     cc,
 		// 服务端地址 以及 服务名的映射
 		addrsStore: map[string][]string{
-			exampleServiceName: {backendAddr},
+			exampleServiceName: {backendAddr, backendAddr},
 		},
 	}
 

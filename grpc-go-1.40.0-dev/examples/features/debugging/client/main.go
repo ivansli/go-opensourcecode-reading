@@ -21,7 +21,6 @@ package main
 
 import (
 	"context"
-	"google.golang.org/grpc/balancer/roundrobin"
 	"log"
 	"net"
 	"os"
@@ -68,8 +67,29 @@ func main() {
 
 		// grpc.WithBalancerName、grpc.WithDefaultServiceConfig 二选一
 		// 但是 grpc.WithBalancerName 将被弃用
-		grpc.WithBalancerName(roundrobin.Name),
+		//grpc.WithBalancerName(roundrobin.Name),
+
+		// https://github.com/grpc/grpc/blob/master/doc/service_config.md
+		// grpc.WithDefaultServiceConfig
+		//
+		// {
+		//  "loadBalancingConfig": [ { "round_robin": {} } ],
+		//  "methodConfig": [
+		//    {
+		//      "name": [
+		//        { "service": "foo", "method": "bar" },
+		//        { "service": "baz" }
+		//      ],
+		//      "timeout": "1.000000001s"
+		//    }
+		//  ]
+		// }
 		grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"round_robin"}`),
+		// 从通道读取配置信息
+		// 将被弃用
+		grpc.WithServiceConfig(nil),
+
+		grpc.WithTimeout(time.Second),
 	)
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)

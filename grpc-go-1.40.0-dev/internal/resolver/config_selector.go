@@ -150,6 +150,9 @@ type SafeConfigSelector struct {
 
 // UpdateConfigSelector swaps to the provided ConfigSelector and blocks until
 // all uses of the previous ConfigSelector have completed.
+//
+// UpdateConfigSelector 切换到所提供的ConfigSelector并阻塞
+// 直到之前的ConfigSelector的所有使用都完成。
 func (scs *SafeConfigSelector) UpdateConfigSelector(cs ConfigSelector) {
 	scs.mu.Lock()
 	defer scs.mu.Unlock()

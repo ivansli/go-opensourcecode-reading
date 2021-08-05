@@ -56,7 +56,7 @@ func newCCBalancerWrapper(cc *ClientConn, b balancer.Builder, bopts balancer.Bui
 	// 此时 cc *ClientConn 中已经包含了所有的可用地址信息
 	ccb := &ccBalancerWrapper{
 		cc:       cc,
-		updateCh: buffer.NewUnbounded(),
+		updateCh: buffer.NewUnbounded(), // 创建 updateCh 的 chan
 		closed:   grpcsync.NewEvent(),
 		done:     grpcsync.NewEvent(),
 		subConns: make(map[*acBalancerWrapper]struct{}),
@@ -67,6 +67,9 @@ func newCCBalancerWrapper(cc *ClientConn, b balancer.Builder, bopts balancer.Bui
 
 	// 使用 负载均衡构建器 来创建一个 负载均衡器
 	// 如果是 roundrobin 在 balancer/roundrobin/roundrobin.go
+	//
+	// ccb 为负载均衡包装器， 被包含在 负载均衡器 中
+	// 也就是说：负载均衡包装器 包含 负载均衡器， 负载均衡器 也包含 负载均衡包装器
 	ccb.balancer = b.Build(ccb, bopts)
 	return ccb
 }
@@ -149,16 +152,19 @@ func (ccb *ccBalancerWrapper) handleSubConnStateChange(sc balancer.SubConn, s co
 //
 // ccs *balancer.ClientConnState 包含解析出来的地址列表
 func (ccb *ccBalancerWrapper) updateClientConnState(ccs *balancer.ClientConnState) error {
+	// 需要对 负载均衡器操作 加锁
 	ccb.balancerMu.Lock()
 	defer ccb.balancerMu.Unlock()
 
 	//////////////////////////////////////////////////////////////
-	// ！！！建立连接
+	// ！！！由负载均衡器 ccb.balancer 来 建立连接
 	// pick_first 在 pickfirst.go
+	// roundrobin 在 balancer/base/balancer.go，roundrobin 对所有地址建立对应连接 并在invoke时使用
 	//
+	// ccb.balancer 为 实现了  balancer.Balancer 接口的对象
 	//
-	// roundrobin 在 balancer/base/balancer.go
-	// 	roundrobin 会对所有可用的地址建立对应连接以备在 invoke时使用
+	// ccb 是负载均衡器包装器，其中 balancer为  负载均衡器
+	// 同时 balancer 负载均衡器，中也包含了 ccb 负载均衡器包装器
 	////////////////////////////////////////////////////////////
 	return ccb.balancer.UpdateClientConnState(*ccs)
 }
@@ -169,24 +175,37 @@ func (ccb *ccBalancerWrapper) resolverError(err error) {
 	ccb.balancerMu.Unlock()
 }
 
+// ！！！ 重要 ！！！
+// 负载均衡器 会 对 第一次出现的地址创建一个 SubConn 对象
+// 每一个服务端地址 都对应一个 SubConn 对象
+//   type SubConn interface {
+//         UpdateAddresses([]resolver.Address)
+//         Connect()
+//    }
 func (ccb *ccBalancerWrapper) NewSubConn(addrs []resolver.Address, opts balancer.NewSubConnOptions) (balancer.SubConn, error) {
 	if len(addrs) <= 0 {
 		return nil, fmt.Errorf("grpc: cannot create SubConn with empty address list")
 	}
 	ccb.mu.Lock()
 	defer ccb.mu.Unlock()
+
 	if ccb.subConns == nil {
 		return nil, fmt.Errorf("grpc: ClientConn balancer wrapper was closed")
 	}
+
+	// 对当前地址 创建一个  新的 addrConn
 	ac, err := ccb.cc.newAddrConn(addrs, opts)
 	if err != nil {
 		return nil, err
 	}
+
+	// ac 的包装器
 	acbw := &acBalancerWrapper{ac: ac}
 	acbw.ac.mu.Lock()
 	ac.acbw = acbw
 	acbw.ac.mu.Unlock()
 	ccb.subConns[acbw] = struct{}{}
+
 	return acbw, nil
 }
 
@@ -275,13 +294,15 @@ func (acbw *acBalancerWrapper) UpdateAddresses(addrs []resolver.Address) {
 	}
 }
 
+// 对 acbw.ac 创建地址连接
 func (acbw *acBalancerWrapper) Connect() {
 	acbw.mu.Lock()
 	defer acbw.mu.Unlock()
 
 	///////////////////////////////////////////////
 	// ！！！重要
-	// 建立连接
+	// 对 ac 的地址建立一个可用的连接
+	// ac 的地址连接状态 由一个新的协程来维持
 	///////////////////////////////////////////////
 	acbw.ac.connect()
 }

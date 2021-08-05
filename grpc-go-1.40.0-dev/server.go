@@ -567,19 +567,26 @@ func NewServer(opt ...ServerOption) *Server {
 	}
 
 	s := &Server{
-		lis:      make(map[net.Listener]bool),
-		opts:     opts,
-		conns:    make(map[string]map[transport.ServerTransport]bool),
+		lis: make(map[net.Listener]bool),
+
+		// ServerOption
+		opts:  opts,
+		conns: make(map[string]map[transport.ServerTransport]bool),
+
+		// 对外提供的接口 信息
 		services: make(map[string]*serviceInfo),
 		quit:     grpcsync.NewEvent(),
 		done:     grpcsync.NewEvent(),
-		czData:   new(channelzData),
+
+		// channelz 监控数据相关
+		czData: new(channelzData),
 	}
 
-	// 拦截器处理
+	// 拦截器 合并
 	chainUnaryServerInterceptors(s)
 	chainStreamServerInterceptors(s)
 
+	// 条件变量
 	s.cv = sync.NewCond(&s.mu)
 	if EnableTracing {
 		_, file, line, _ := runtime.Caller(1)
@@ -789,7 +796,9 @@ func (l *listenSocket) Close() error {
 func (s *Server) Serve(lis net.Listener) error {
 	s.mu.Lock()
 	s.printf("serving")
-	s.serve = true
+	s.serve = true // 开始提供服务事务标识设置为 true
+
+	// lis map[net.Listener]boo
 	if s.lis == nil {
 		// Serve called after Stop or GracefulStop.
 		s.mu.Unlock()
@@ -797,6 +806,7 @@ func (s *Server) Serve(lis net.Listener) error {
 		return ErrServerStopped
 	}
 
+	// sync.WaitGroup
 	s.serveWG.Add(1)
 	defer func() {
 		s.serveWG.Done()
@@ -844,10 +854,12 @@ func (s *Server) Serve(lis net.Listener) error {
 				s.mu.Lock()
 				s.printf("Accept error: %v; retrying in %v", err, tempDelay)
 				s.mu.Unlock()
+
 				timer := time.NewTimer(tempDelay)
 				select {
 				case <-timer.C:
-				case <-s.quit.Done():
+				case <-s.quit.Done(): // grapcefulstop 触发，准备退出
+					// 停止timer定时器，否则会一直在时间堆中
 					timer.Stop()
 					return nil
 				}
@@ -959,6 +971,8 @@ func (s *Server) newHTTP2Transport(c net.Conn, authInfo credentials.AuthInfo) tr
 		MaxHeaderListSize:     s.opts.maxHeaderListSize,
 		HeaderTableSize:       s.opts.headerTableSize,
 	}
+
+	// 创建一个服务传输对象
 	st, err := transport.NewServerTransport(c, config)
 	if err != nil {
 		s.mu.Lock()
@@ -971,7 +985,6 @@ func (s *Server) newHTTP2Transport(c net.Conn, authInfo credentials.AuthInfo) tr
 
 	return st
 }
-
 
 func (s *Server) serveStreams(st transport.ServerTransport) {
 	defer st.Close()
@@ -1836,7 +1849,11 @@ func (s *Server) Stop() {
 // GracefulStop stops the gRPC server gracefully. It stops the server from
 // accepting new connections and RPCs and blocks until all the pending RPCs are
 // finished.
+//
+// grpc 优雅退出
+// 先关闭 监听套接字，再关闭连接套接字
 func (s *Server) GracefulStop() {
+	// 退出标识操作
 	s.quit.Fire()
 	defer s.done.Fire()
 
@@ -1845,34 +1862,59 @@ func (s *Server) GracefulStop() {
 			channelz.RemoveEntry(s.channelzID)
 		}
 	})
+
 	s.mu.Lock()
 	if s.conns == nil {
 		s.mu.Unlock()
 		return
 	}
 
+	// 关闭 已经建立的监听套接字
+	// 不再监听
 	for lis := range s.lis {
 		lis.Close()
 	}
+
 	s.lis = nil
+	// 没有停止 客户端接收新的连接，则开始停止
 	if !s.drain {
 		for _, conns := range s.conns {
 			for st := range conns {
+				// drain 英文 排水、消耗
+				// Drain 通知客户端这个 ServerTransport 停止接受新的rpc
 				st.Drain()
 			}
 		}
+
+		// 停止接受新的rpc 完毕
 		s.drain = true
 	}
 
 	// Wait for serving threads to be ready to exit.  Only then can we be sure no
 	// new conns will be created.
+	//
+	// 等待服务线程准备退出。只有这样，我们才能确保不会产生新的 conns
 	s.mu.Unlock()
+
+	// 等待 func (s *Server) Serve(lis net.Listener) error 退出循环
+	// 以及
+	// 等待每一个连接退出
+	// 		s.serveWG.Add(1)
+	//
+	//		// ！！！核心
+	//		// 对每一个达到的请求启动一个新的协程
+	//		go func() {
+	//			s.handleRawConn(lis.Addr().String(), rawConn) // 核心
+	//			s.serveWG.Done()
+	//		}()
 	s.serveWG.Wait()
+
 	s.mu.Lock()
 
 	for len(s.conns) != 0 {
 		s.cv.Wait()
 	}
+
 	s.conns = nil
 	if s.events != nil {
 		s.events.Finish()

@@ -26,15 +26,19 @@ import (
 )
 
 // Event represents a one-time event that may occur in the future.
+// Event 代表未来某一刻有事件发生
 type Event struct {
 	fired int32
 	c     chan struct{}
-	o     sync.Once
+	o     sync.Once // 保证 fire、c只被执行一次操作
 }
 
 // Fire causes e to complete.  It is safe to call multiple times, and
 // concurrently.  It returns true iff this call to Fire caused the signaling
 // channel returned by Done to close.
+//
+// Fire 激发、引发
+//
 func (e *Event) Fire() bool {
 	ret := false
 	e.o.Do(func() {
@@ -46,16 +50,20 @@ func (e *Event) Fire() bool {
 }
 
 // Done returns a channel that will be closed when Fire is called.
+//
+// 返回一个 chan， 当Fire调用时关闭chan
 func (e *Event) Done() <-chan struct{} {
 	return e.c
 }
 
 // HasFired returns true if Fire has been called.
+// 判断是否执行了 Fire
 func (e *Event) HasFired() bool {
 	return atomic.LoadInt32(&e.fired) == 1
 }
 
 // NewEvent returns a new, ready-to-use Event.
+// 返回一个新的 Event
 func NewEvent() *Event {
 	return &Event{c: make(chan struct{})}
 }

@@ -383,10 +383,11 @@ func newFramer(conn net.Conn, writeBufferSize, readBufferSize int, maxHeaderList
 		r = bufio.NewReaderSize(r, readBufferSize)
 	}
 
+	// 创建用些写数据的 buffer 对象
 	w := newBufWriter(conn, writeBufferSize)
 	f := &framer{
 		writer: w,
-		fr:     http2.NewFramer(w, r),
+		fr:     http2.NewFramer(w, r), // 生成包含读写的 Framer
 	}
 
 	f.fr.SetMaxReadFrameSize(http2MaxFrameLen)

@@ -206,23 +206,31 @@ func (j jsonName) generatePath() (string, error) {
 // TODO(lyuxuan): delete this struct after cleaning up old service config implementation.
 type jsonMC struct {
 	Name                    *[]jsonName
+
 	WaitForReady            *bool
+
 	Timeout                 *string
+
 	MaxRequestMessageBytes  *int64
 	MaxResponseMessageBytes *int64
+
 	RetryPolicy             *jsonRetryPolicy
 }
 
 // TODO(lyuxuan): delete this struct after cleaning up old service config implementation.
 type jsonSC struct {
-	// 负载均衡策略
+	// 负载均衡 策略
 	LoadBalancingPolicy *string
+
 	// 负载均衡配置
 	LoadBalancingConfig *internalserviceconfig.BalancerConfig
+
 	// 每个rpc方法的配置
 	MethodConfig *[]jsonMC
+
 	// 重试机制相关配置
 	RetryThrottling *retryThrottlingPolicy
+
 	// 健康检测配置
 	HealthCheckConfig *healthCheckConfig
 }
@@ -230,6 +238,7 @@ type jsonSC struct {
 func init() {
 	internal.ParseServiceConfigForTesting = parseServiceConfig
 }
+
 func parseServiceConfig(js string) *serviceconfig.ParseResult {
 	if len(js) == 0 {
 		return &serviceconfig.ParseResult{Err: fmt.Errorf("no JSON service config provided")}
@@ -257,6 +266,18 @@ func parseServiceConfig(js string) *serviceconfig.ParseResult {
 		}
 	}
 
+	// {
+	//  "loadBalancingConfig": [ { "round_robin": {} } ],
+	//  "methodConfig": [
+	//    {
+	//      "name": [
+	//        { "service": "foo", "method": "bar" },
+	//        { "service": "baz" }
+	//      ],
+	//      "timeout": "1.000000001s"
+	//    }
+	//  ]
+	// }
 	if rsc.MethodConfig == nil {
 		return &serviceconfig.ParseResult{Config: &sc}
 	}
@@ -266,6 +287,8 @@ func parseServiceConfig(js string) *serviceconfig.ParseResult {
 		if m.Name == nil {
 			continue
 		}
+
+		// 解析 timeout 字段
 		d, err := parseDuration(m.Timeout)
 		if err != nil {
 			logger.Warningf("grpc: parseServiceConfig error unmarshaling %s due to %v", js, err)

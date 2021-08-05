@@ -151,6 +151,10 @@ func dial(ctx context.Context, fn func(context.Context, string) (net.Conn, error
 
 	// 获取 服务端地址类型
 	networkType, ok := networktype.Get(addr)
+
+	//////////////////////////////////////
+	// 使用自定义的Dialer发起创建连接
+	//////////////////////////////////////
 	if fn != nil {
 		if networkType == "unix" && !strings.HasPrefix(address, "\x00") {
 			// For backward compatibility, if the user dialed "unix:///path",
@@ -166,6 +170,10 @@ func dial(ctx context.Context, fn func(context.Context, string) (net.Conn, error
 	if !ok {
 		networkType, address = parseDialTarget(address)
 	}
+
+	//////////////////////////////////////
+	// proxyDial
+	//////////////////////////////////////
 	if networkType == "tcp" && useProxy {
 		return proxyDial(ctx, address, grpcUA)
 	}
@@ -173,8 +181,10 @@ func dial(ctx context.Context, fn func(context.Context, string) (net.Conn, error
 	// 使用debug.trace 打印整个调用链
 	//debug.PrintStack()
 
-	// 使用net包来捷星连接
+	//////////////////////////////////////
+	// 使用net包来建立连接
 	// 到这里就是grpc框架创建连接的过程了
+	//////////////////////////////////////
 	return (&net.Dialer{}).DialContext(ctx, networkType, address)
 }
 
@@ -215,6 +225,7 @@ func newHTTP2Client(connectCtx, ctx context.Context, addr resolver.Address, opts
 	///////////////////////////////////////////////
 	// ！！！重要
 	// 对 addr 地址 建立连接
+	// 注意 opts.Dialer
 	///////////////////////////////////////////////
 	conn, err := dial(connectCtx, opts.Dialer, addr, opts.UseProxy, opts.UserAgent)
 	if err != nil {
@@ -541,22 +552,28 @@ func newHTTP2Client(connectCtx, ctx context.Context, addr resolver.Address, opts
 	return t, nil
 }
 
+// 创建一个流
 func (t *http2Client) newStream(ctx context.Context, callHdr *CallHdr) *Stream {
 	// TODO(zhaoq): Handle uint32 overflow of Stream.id.
+
+	// 创建 stream 结构体
 	s := &Stream{
 		ct:             t,
 		done:           make(chan struct{}),
-		method:         callHdr.Method,
-		sendCompress:   callHdr.SendCompress,
-		buf:            newRecvBuffer(),
+		method:         callHdr.Method, // 请求服务端的方法
+		sendCompress:   callHdr.SendCompress, // 压缩
+		buf:            newRecvBuffer(), // ！！！
 		headerChan:     make(chan struct{}),
 		contentSubtype: callHdr.ContentSubtype,
 		doneFunc:       callHdr.DoneFunc,
 	}
+
+	// 发送字节大小规格
 	s.wq = newWriteQuota(defaultWriteQuota, s.done)
 	s.requestRead = func(n int) {
 		t.adjustWindow(s, uint32(n))
 	}
+
 	// The client side stream context should have exactly the same life cycle with the user provided context.
 	// That means, s.ctx should be read-only. And s.ctx is done iff ctx is done.
 	// So we use the original context here instead of creating a copy.
@@ -781,15 +798,21 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 	}()
 	ctx = peer.NewContext(ctx, t.getPeer())
 
+	/////////////////////////////////////////
 	// ！！！创建 header 信息
 	// 1. 自定义请求校验
 	// 2. 添加头部字段信息
+	/////////////////////////////////////////
+
+	// 创建协议头字段，把客户端的信息封装在header中
 	headerFields, err := t.createHeaderFields(ctx, callHdr)
 	if err != nil {
 		return nil, err
 	}
 
+	// 核心！！！！
 	s := t.newStream(ctx, callHdr)
+
 	cleanup := func(err error) {
 		if s.swapState(streamDone) == streamDone {
 			// If it was already done, return.
@@ -805,11 +828,13 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 		}
 	}
 
+	// 创建 header帧 结构体
 	hdr := &headerFrame{
-		hf:        headerFields,
-		endStream: false,
-		initStream: func(id uint32) error {
+		hf:        headerFields, // 帧头数据字段信息
+		endStream: false, // 是否结束标识
+		initStream: func(id uint32) error { // 帧发送器在发送headerFrame时调用
 			t.mu.Lock()
+			// 状态校验
 			if state := t.state; state != reachable {
 				t.mu.Unlock()
 				// Do a quick cleanup.
@@ -820,6 +845,8 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 				cleanup(err)
 				return err
 			}
+
+			// 新创建的流 注册到 t.activeStreams[id]
 			t.activeStreams[id] = s
 			if channelz.IsOn() {
 				atomic.AddInt64(&t.czData.streamsStarted, 1)
@@ -838,6 +865,7 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 
 	firstTry := true
 	var ch chan struct{}
+	// 计算流id
 	checkForStreamQuota := func(it interface{}) bool {
 		if t.streamQuota <= 0 { // Can go negative if server decreases it.
 			if firstTry {
@@ -849,11 +877,18 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 		if !firstTry {
 			t.waitingStreams--
 		}
+
 		t.streamQuota--
 		h := it.(*headerFrame)
+
+		// 当前帧的 stream id
 		h.streamID = t.nextID
+
+		// 由此可见 stream id 只能是奇数
 		t.nextID += 2
+
 		s.id = h.streamID
+
 		s.fc = &inFlow{limit: uint32(t.initialWindowSize)}
 		if t.streamQuota > 0 && t.waitingStreams > 0 {
 			select {
@@ -863,7 +898,9 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 		}
 		return true
 	}
+
 	var hdrListSizeErr error
+	// 对协议头字段长度进行最大值校验
 	checkForHeaderListSize := func(it interface{}) bool {
 		if t.maxSendHeaderListSize == nil {
 			return true
@@ -878,6 +915,8 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 		}
 		return true
 	}
+
+	// for 循环
 	for {
 		success, err := t.controlBuf.executeAndPut(func(it interface{}) bool {
 			if !checkForStreamQuota(it) {
@@ -891,12 +930,15 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 		if err != nil {
 			return nil, err
 		}
+
 		if success {
 			break
 		}
+
 		if hdrListSizeErr != nil {
 			return nil, &NewStreamError{Err: hdrListSizeErr, DoNotRetry: true}
 		}
+
 		firstTry = false
 		select {
 		case <-ch:
@@ -908,6 +950,7 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 			return nil, ErrConnClosing
 		}
 	}
+
 	if t.statsHandler != nil {
 		header, ok := metadata.FromOutgoingContext(ctx)
 		if ok {

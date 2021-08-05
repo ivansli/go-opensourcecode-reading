@@ -184,27 +184,40 @@ func newClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, meth
 	//
 	// 由于在Dial时可能是非阻塞异步的建立conn
 	// 所以，这里要确保conn已经建立完毕，很重要
+
+	// cc grpc.ClientConn 等待连接就绪
 	if err := cc.waitForResolvedAddrs(ctx); err != nil {
 		return nil, err
 	}
 
 	var mc serviceconfig.MethodConfig
 	var onCommit func()
+
+	//////////////////////////////////////////////////////
+	// stream 流创建逻辑分两种
+	//	1. 先定义一个默认的stream创建逻辑方法 newStream
+	//  2. 如果存在 safeConfigSelector 信息，则对应逻辑封装到 newStream 中
+	//////////////////////////////////////////////////////
+
+	// 创建一个默认的带有参数，但是没有 safeConfigSelector 的流方法
 	var newStream = func(ctx context.Context, done func()) (iresolver.ClientStream, error) {
-		// ！！！ TODO 追源码
-		// 重要 创建新的 stream
-		// 会从 负载均衡选择器中选择一个连接
+		////////////////////////////////////////////
+		// ！！！ 重要 TODO 追源码
+		// 从 负载均衡选择器中选择一个连接 并 创建新的 stream
 		//
 		// newClientStreamWithParams
+		////////////////////////////////////////////
 		return newClientStreamWithParams(ctx, desc, cc, method, mc, onCommit, done, opts...)
 	}
 
 	rpcInfo := iresolver.RPCInfo{Context: ctx, Method: method}
+
 	rpcConfig, err := cc.safeConfigSelector.SelectConfig(rpcInfo)
 	if err != nil {
 		return nil, toRPCErr(err)
 	}
 
+	// 配置信息不为空
 	if rpcConfig != nil {
 		if rpcConfig.Context != nil {
 			ctx = rpcConfig.Context
@@ -213,20 +226,27 @@ func newClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, meth
 		mc = rpcConfig.MethodConfig
 		onCommit = rpcConfig.OnCommitted
 
-		// 设置有拦截器
+		// 设置有拦截器，把拦截器封装到 newStream 中
 		if rpcConfig.Interceptor != nil {
 			rpcInfo.Context = nil
 			ns := newStream
+
+			// 把 拦截器 逻辑封装到 stream 的创建过程中
 			newStream = func(ctx context.Context, done func()) (iresolver.ClientStream, error) {
 				cs, err := rpcConfig.Interceptor.NewStream(ctx, rpcInfo, done, ns)
+
 				if err != nil {
 					return nil, toRPCErr(err)
 				}
+
 				return cs, nil
 			}
 		}
 	}
 
+	///////////////////////
+	// 执行创建流逻辑
+	///////////////////////
 	return newStream(ctx, func() {})
 }
 
@@ -336,13 +356,14 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 		sh.HandleRPC(ctx, begin)
 	}
 
+	// clientStream 实现了一个客户端流
 	cs := &clientStream{
 		callHdr:      callHdr,
 		ctx:          ctx,
 		methodConfig: &mc,
 		opts:         opts,
 		callInfo:     c,
-		cc:           cc,
+		cc:           cc, // grpc.ClientConn 建立连接的对象
 		desc:         desc,
 		codec:        c.codec,
 		cp:           cp,
@@ -357,9 +378,14 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 	}
 	cs.binlog = binarylog.GetMethodLogger(method)
 
+	/////////////////////////////////////////////////////////////
 	// Only this initial attempt（尝试、企图） has stats/tracing.
 	// TODO(dfawley): move to newAttempt when per-attempt stats are implemented.
-	// ！！！！
+	//
+	// ！！！！重要 ！！！！
+	// 获取一个准备就绪的连接
+	/////////////////////////////////////////////////////////////
+	// 获取一个准备就绪的连接，存放在 cs 对象中
 	if err := cs.newAttemptLocked(sh, trInfo); err != nil {
 		cs.finish(err)
 		return nil, err
@@ -451,9 +477,11 @@ func (cs *clientStream) newAttemptLocked(sh stats.Handler, trInfo *traceInfo) (r
 		))
 	}
 
-	///////////////////////////
+	//////////////////////////////////////
 	// 获取一个连接
-	///////////////////////////
+	// t 就是准备就绪的 连接 stream
+	// 使用负载均衡器 pick 一个连接
+	////////////////////////////////////
 	t, done, err := cs.cc.getTransport(ctx, cs.callInfo.failFast, cs.callHdr.Method)
 	if err != nil {
 		return err
@@ -461,19 +489,25 @@ func (cs *clientStream) newAttemptLocked(sh stats.Handler, trInfo *traceInfo) (r
 	if trInfo != nil {
 		trInfo.firstLine.SetRemoteAddr(t.RemoteAddr())
 	}
+
+	// 把就绪的 stream 连接 放在 cs 中
 	newAttempt.t = t
 	newAttempt.done = done
 	cs.attempt = newAttempt
+
 	return nil
 }
 
 // newStream creates a Stream for an RPC.
+// 使用连接 创建一个 stream
 func (a *csAttempt) newStream() error {
 	cs := a.cs
+
+	// 重试次数
 	cs.callHdr.PreviousAttempts = cs.numRetries
 
 	// TODO 追源码！！！
-	// grpc-go/internal/transport/http2_client.go:727
+	// grpc-go/internal/transport/http2_client.go
 	// NewStream
 	//	1. 自定义请求校验
 	//	2. 添加头部字段信息
@@ -481,6 +515,7 @@ func (a *csAttempt) newStream() error {
 	//
 	// 重要
 	// a.t.NewStream 即 grpc-go/internal/transport/http2_client.go
+	// 创建流
 	s, err := a.t.NewStream(cs.ctx, cs.callHdr)
 	if err != nil {
 		// Return without converting to an RPC error so retry code can
@@ -488,11 +523,15 @@ func (a *csAttempt) newStream() error {
 		return err
 	}
 	cs.attempt.s = s
+
+	// 初始化 p， 用来读取完整的rpc消息
 	cs.attempt.p = &parser{r: s}
 	return nil
 }
 
 // clientStream implements a client side Stream.
+//
+// clientStream实现了一个客户端流
 type clientStream struct {
 	callHdr  *transport.CallHdr
 	opts     []CallOption

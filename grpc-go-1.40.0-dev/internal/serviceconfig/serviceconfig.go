@@ -129,12 +129,21 @@ type MethodConfig struct {
 	// WaitForReady indicates whether RPCs sent to this method should wait until
 	// the connection is ready by default (!failfast). The value specified via the
 	// gRPC client API will override the value set here.
+	//
+	// WaitForReady指示发送到此方法的rpc是否应该等待
+	// 直到默认连接就绪(!failfast)。通过gRPC客户端API指定的值将覆盖这里设置的值
 	WaitForReady *bool
+
 	// Timeout is the default timeout for RPCs sent to this method. The actual
 	// deadline used will be the minimum of the value specified here and the value
 	// set by the application via the gRPC client API.  If either one is not set,
 	// then the other will be used.  If neither is set, then the RPC has no deadline.
+	//
+	// Timeout是发送到此方法的rpc的默认超时
+	// 实际使用的截止日期将是这里指定的值的最小值和应用程序通过gRPC客户端API设置的值
+	// 如果其中一个未设置，那么将使用另一个。如果两者都没有设置，则RPC没有截止日期
 	Timeout *time.Duration
+
 	// MaxReqSize is the maximum allowed payload size for an individual request in a
 	// stream (client->server) in bytes. The size which is measured is the serialized
 	// payload after per-message compression (but before stream compression) in bytes.
@@ -145,6 +154,7 @@ type MethodConfig struct {
 	// MaxRespSize is the maximum allowed payload size for an individual response in a
 	// stream (server->client) in bytes.
 	MaxRespSize *int
+
 	// RetryPolicy configures retry options for the method.
 	RetryPolicy *RetryPolicy
 }

@@ -22,6 +22,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"google.golang.org/grpc/balancer/roundrobin"
+	"google.golang.org/grpc/internal/resolver/passthrough"
 	"log"
 	"os"
 	"time"
@@ -96,6 +98,17 @@ func main() {
 		grpc.WithUnaryInterceptor(unaryInterceptor3),
 		// 一次设置多个拦截器
 		grpc.WithChainUnaryInterceptor(unaryInterceptor1, unaryInterceptor2),
+
+		// ！！！！
+		// 注册 名称解析器的构造器
+		// 或者 使用  resolver.Register(passthrough.NewBuilder())
+		// passthrough.NewBuilder() 也可以是自己实现的构造器对象，例如 etcd等
+		grpc.WithResolvers(passthrough.NewBuilder()),
+		// 设置负载均衡器的构造器
+		grpc.WithBalancerName(roundrobin.Name),
+
+		// 将被弃用
+		//grpc.WithDialer(func(s string, duration time.Duration) (net.Conn, error) {}),
 	)
 
 	if err != nil {

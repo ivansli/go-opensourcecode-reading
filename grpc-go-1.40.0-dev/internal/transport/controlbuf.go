@@ -283,7 +283,10 @@ func (l *outStreamList) dequeue() *outStream {
 // but can also be used to instruct loopy to update its internal state.
 // It shouldn't be confused with an HTTP2 frame, although some of the control frames
 // like dataFrame and headerFrame do go out on wire as HTTP2 frames.
+//
+// 帧缓存器，用来存放创建的帧
 type controlBuffer struct {
+	// 双向chan 实现同步效果，读不到数据就一直阻塞
 	ch              chan struct{}
 	done            <-chan struct{}
 	mu              sync.Mutex

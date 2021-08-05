@@ -131,7 +131,7 @@ func (pw *pickerWrapper) pick(ctx context.Context, failfast bool, info balancer.
 		pw.mu.Unlock()
 
 		/////////////////////////////////////
-		// ！！！
+		// ！！！重要 ！！！
 		// 负载均衡选择器选择一个可用连接
 		/////////////////////////////////////
 
@@ -161,10 +161,14 @@ func (pw *pickerWrapper) pick(ctx context.Context, failfast bool, info balancer.
 			logger.Error("subconn returned from pick is not *acBalancerWrapper")
 			continue
 		}
+
+		// 连接已经准备就绪
 		if t := acw.getAddrConn().getReadyTransport(); t != nil {
 			if channelz.IsOn() {
 				return t, doneChannelzWrapper(acw, pickResult.Done), nil
 			}
+
+			// t 就是准备好的连接
 			return t, pickResult.Done, nil
 		}
 

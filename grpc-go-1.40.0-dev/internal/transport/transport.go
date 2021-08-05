@@ -721,6 +721,7 @@ type ServerTransport interface {
 	RemoteAddr() net.Addr
 
 	// Drain notifies the client this ServerTransport stops accepting new RPCs.
+	// Drain通知客户端这个ServerTransport停止接受新的rpc
 	Drain()
 
 	// IncrMsgSent increments the number of message sent through this transport.
