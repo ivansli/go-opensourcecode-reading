@@ -41,12 +41,34 @@ func NewBuilder(d registry.Discovery, opts ...Option) resolver.Builder {
 func (d *builder) Build(target resolver.Target, cc resolver.ClientConn, opts resolver.BuildOptions) (resolver.Resolver, error) {
 	// 获取监听 chan
 	// d.discoverer 是etcd时为 go-kratos/etcd@v0.1.0/registry/registry.go  New()
+	//
+	// w 为
+	// type watcher struct {
+	//	key       string
+	//	ctx       context.Context
+	//	cancel    context.CancelFunc
+	//	watchChan clientv3.WatchChan
+	//	watcher   clientv3.Watcher
+	//	kv        clientv3.KV
+	//	ch        clientv3.WatchChan
+	// }
 	w, err := d.discoverer.Watch(context.Background(), target.Endpoint)
 	if err != nil {
 		return nil, err
 	}
+
 	ctx, cancel := context.WithCancel(context.Background())
-	// 名称解析器
+
+	// 名称解析器 transport/grpc/resolver/discovery/resolver.go
+	//
+	// type discoveryResolver struct {
+	//	w   registry.Watcher
+	//	cc  resolver.ClientConn
+	//	log *log.Helper
+	//
+	//	ctx    context.Context
+	//	cancel context.CancelFunc
+	// }
 	r := &discoveryResolver{
 		w:      w,
 		cc:     cc,

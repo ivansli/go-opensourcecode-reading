@@ -107,24 +107,35 @@ func NewServer(opts ...ServerOption) *Server {
 	for _, o := range opts {
 		o(srv)
 	}
+
+	// kratos定义的拦截器：srv.unaryServerInterceptor()
+	// 可以包含了多个中间件
 	var ints = []grpc.UnaryServerInterceptor{
 		srv.unaryServerInterceptor(),
 	}
 	if len(srv.ints) > 0 {
 		ints = append(ints, srv.ints...)
 	}
+
 	var grpcOpts = []grpc.ServerOption{
-		grpc.ChainUnaryInterceptor(ints...),
+		grpc.ChainUnaryInterceptor(ints...), // 服务端 拦截器
 	}
+	// 其他options
 	if len(srv.grpcOpts) > 0 {
 		grpcOpts = append(grpcOpts, srv.grpcOpts...)
 	}
+
+	// grpc serve 对象
 	srv.Server = grpc.NewServer(grpcOpts...)
 	srv.metadata = apimd.NewServer(srv.Server)
+
 	// internal register
 	grpc_health_v1.RegisterHealthServer(srv.Server, srv.health)
 	apimd.RegisterMetadataServer(srv.Server, srv.metadata)
+
+	// grpc 注册反射，方便调试查看
 	reflection.Register(srv.Server)
+
 	return srv
 }
 
@@ -154,13 +165,18 @@ func (s *Server) Endpoint() (*url.URL, error) {
 }
 
 // Start start the gRPC server.
+// 启动 grpc 服务
 func (s *Server) Start(ctx context.Context) error {
 	if _, err := s.Endpoint(); err != nil {
 		return err
 	}
+
 	s.ctx = ctx
 	s.log.Infof("[gRPC] server listening on: %s", s.lis.Addr().String())
+	// 继续健康检查
 	s.health.Resume()
+
+	// 调用 grpc 框架的 Serve 方法
 	return s.Serve(s.lis)
 }
 
@@ -190,9 +206,11 @@ func (s *Server) unaryServerInterceptor() grpc.UnaryServerInterceptor {
 		h := func(ctx context.Context, req interface{}) (interface{}, error) {
 			return handler(ctx, req)
 		}
+
 		if len(s.middleware) > 0 {
 			h = middleware.Chain(s.middleware...)(h)
 		}
+
 		return h(ctx, req)
 	}
 }

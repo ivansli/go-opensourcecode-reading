@@ -98,11 +98,16 @@ var (
 // isReservedHeader checks whether hdr belongs to HTTP2 headers
 // reserved by gRPC protocol. Any other headers are classified as the
 // user-specified metadata.
+//
+// isReservedHeader 检查hdr是否属于gRPC协议保留的HTTP2报头
+// 任何其他头文件都被分类为用户指定的元数据
 func isReservedHeader(hdr string) bool {
 	if hdr != "" && hdr[0] == ':' {
 		return true
 	}
+
 	switch hdr {
+	// 也就是说 下面这些字段是 框架定义的，不允许用户来设置，就算用户设置也会被忽略
 	case "content-type",
 		"user-agent",
 		"grpc-message-type",

@@ -108,7 +108,9 @@ type http2Client struct {
 	streamQuota           int64
 	streamsQuotaAvailable chan struct{}
 	waitingStreams        uint32
-	nextID                uint32
+
+	// stream帧 的下一个id
+	nextID uint32
 
 	mu            sync.Mutex // guard the following variables
 	state         transportState
@@ -361,12 +363,14 @@ func newHTTP2Client(connectCtx, ctx context.Context, addr resolver.Address, opts
 	}
 
 	// 重要
-	// http2 客户端对象
+	// http2 客户端对象，保存着创建好的连接 conn
 	t := &http2Client{
-		ctx:       ctx,
-		ctxDone:   ctx.Done(), // Cache Done chan.
-		cancel:    cancel,
-		userAgent: opts.UserAgent,
+		// 上下文 ctx
+		ctx:     ctx,
+		ctxDone: ctx.Done(), // ctx Done chan.
+		cancel:  cancel,
+
+		userAgent: opts.UserAgent, // ua
 
 		conn:       conn,              // 建立好的客户端连接
 		remoteAddr: conn.RemoteAddr(), // 远端地址
@@ -389,21 +393,28 @@ func newHTTP2Client(connectCtx, ctx context.Context, addr resolver.Address, opts
 		// 每一个数据帧都需要根据帧 Stream ID 从 map 中读取
 		activeStreams: make(map[uint32]*Stream),
 
-		isSecure:    isSecure,
+		isSecure:    isSecure,    // 是否是安全连接
 		perRPCCreds: perRPCCreds, // 实现自定义校验的对象切片
 		kp:          kp,          // 长连接
 
-		statsHandler:          opts.StatsHandler,
-		initialWindowSize:     initialWindowSize,
-		onPrefaceReceipt:      onPrefaceReceipt,
-		nextID:                1,
-		maxConcurrentStreams:  defaultMaxStreamsClient,
+		statsHandler:      opts.StatsHandler,
+		initialWindowSize: initialWindowSize,
+		onPrefaceReceipt:  onPrefaceReceipt,
+
+		// 下一个可用的 stream 帧ID
+		nextID:               1,
+		maxConcurrentStreams: defaultMaxStreamsClient,
+
 		streamQuota:           defaultMaxStreamsClient,
 		streamsQuotaAvailable: make(chan struct{}, 1),
-		czData:                new(channelzData),
-		onGoAway:              onGoAway,
-		onClose:               onClose,
-		keepaliveEnabled:      keepaliveEnabled, // bool 是否保持长连接
+
+		czData: new(channelzData),
+
+		// 2个回调函数
+		onGoAway: onGoAway,
+		onClose:  onClose,
+
+		keepaliveEnabled: keepaliveEnabled, // bool 是否保持长连接
 
 		// !!! 读取帧消息内容时 使用的 bytes.Buffer
 		bufferPool: newBufferPool(),
@@ -552,7 +563,7 @@ func newHTTP2Client(connectCtx, ctx context.Context, addr resolver.Address, opts
 	return t, nil
 }
 
-// 创建一个流
+// 创建一个流结构体
 func (t *http2Client) newStream(ctx context.Context, callHdr *CallHdr) *Stream {
 	// TODO(zhaoq): Handle uint32 overflow of Stream.id.
 
@@ -560,9 +571,9 @@ func (t *http2Client) newStream(ctx context.Context, callHdr *CallHdr) *Stream {
 	s := &Stream{
 		ct:             t,
 		done:           make(chan struct{}),
-		method:         callHdr.Method, // 请求服务端的方法
+		method:         callHdr.Method,       // 请求服务端的方法
 		sendCompress:   callHdr.SendCompress, // 压缩
-		buf:            newRecvBuffer(), // ！！！
+		buf:            newRecvBuffer(),      // ！！！
 		headerChan:     make(chan struct{}),
 		contentSubtype: callHdr.ContentSubtype,
 		doneFunc:       callHdr.DoneFunc,
@@ -592,6 +603,7 @@ func (t *http2Client) newStream(ctx context.Context, callHdr *CallHdr) *Stream {
 			t.updateWindow(s, uint32(n))
 		},
 	}
+
 	return s
 }
 
@@ -605,6 +617,7 @@ func (t *http2Client) getPeer() *peer.Peer {
 // 创建头部字段信息
 func (t *http2Client) createHeaderFields(ctx context.Context, callHdr *CallHdr) ([]hpack.HeaderField, error) {
 	aud := t.createAudience(callHdr)
+
 	ri := credentials.RequestInfo{
 		Method:   callHdr.Method,
 		AuthInfo: t.authInfo,
@@ -616,7 +629,8 @@ func (t *http2Client) createHeaderFields(ctx context.Context, callHdr *CallHdr) 
 		return nil, err
 	}
 
-	// 自定义请求校验
+	// 获取 自定义请求校验字段信息
+	// GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error)
 	callAuthData, err := t.getCallAuthData(ctxWithRequestInfo, aud, callHdr)
 	if err != nil {
 		return nil, err
@@ -630,7 +644,11 @@ func (t *http2Client) createHeaderFields(ctx context.Context, callHdr *CallHdr) 
 	//
 	hfLen := 7 // :method, :scheme, :path, :authority, content-type, user-agent, te
 	hfLen += len(authData) + len(callAuthData)
+
+	// 创建存储这些header字段信息的切片
 	headerFields := make([]hpack.HeaderField, 0, hfLen)
+
+	// 请求方法 默认设置为 post
 	headerFields = append(headerFields, hpack.HeaderField{Name: ":method", Value: "POST"})
 	headerFields = append(headerFields, hpack.HeaderField{Name: ":scheme", Value: t.scheme})
 	headerFields = append(headerFields, hpack.HeaderField{Name: ":path", Value: callHdr.Method})
@@ -646,36 +664,47 @@ func (t *http2Client) createHeaderFields(ctx context.Context, callHdr *CallHdr) 
 		headerFields = append(headerFields, hpack.HeaderField{Name: "grpc-encoding", Value: callHdr.SendCompress})
 		headerFields = append(headerFields, hpack.HeaderField{Name: "grpc-accept-encoding", Value: callHdr.SendCompress})
 	}
+
+	// 设置超时时间
 	if dl, ok := ctx.Deadline(); ok {
 		// Send out timeout regardless its value. The server can detect timeout context by itself.
 		// TODO(mmukhi): Perhaps this field should be updated when actually writing out to the wire.
 		timeout := time.Until(dl)
 		headerFields = append(headerFields, hpack.HeaderField{Name: "grpc-timeout", Value: grpcutil.EncodeDuration(timeout)})
 	}
+
 	for k, v := range authData {
 		headerFields = append(headerFields, hpack.HeaderField{Name: k, Value: encodeMetadataHeader(k, v)})
 	}
+
+	// 自定义校验字段
 	for k, v := range callAuthData {
 		headerFields = append(headerFields, hpack.HeaderField{Name: k, Value: encodeMetadataHeader(k, v)})
 	}
+
 	if b := stats.OutgoingTags(ctx); b != nil {
 		headerFields = append(headerFields, hpack.HeaderField{Name: "grpc-tags-bin", Value: encodeBinHeader(b)})
 	}
+
 	if b := stats.OutgoingTrace(ctx); b != nil {
 		headerFields = append(headerFields, hpack.HeaderField{Name: "grpc-trace-bin", Value: encodeBinHeader(b)})
 	}
 
+	// 获取 AppendToOutgoingContext 之类方法 添加的字段 加入到 header
 	if md, added, ok := metadata.FromOutgoingContextRaw(ctx); ok {
 		var k string
 		for k, vv := range md {
 			// HTTP doesn't allow you to set pseudoheaders after non pseudoheaders were set.
+			// 检查 k 是否是允许用户添加的字段信息
 			if isReservedHeader(k) {
 				continue
 			}
+
 			for _, v := range vv {
 				headerFields = append(headerFields, hpack.HeaderField{Name: k, Value: encodeMetadataHeader(k, v)})
 			}
 		}
+
 		for _, vv := range added {
 			for i, v := range vv {
 				if i%2 == 0 {
@@ -690,14 +719,19 @@ func (t *http2Client) createHeaderFields(ctx context.Context, callHdr *CallHdr) 
 			}
 		}
 	}
+
 	for k, vv := range t.md {
+		// isReservedHeader 检查hdr是否属于gRPC协议保留的HTTP2报头
+		// 任何其他头文件都被分类为用户指定的元数据
 		if isReservedHeader(k) {
 			continue
 		}
+
 		for _, v := range vv {
 			headerFields = append(headerFields, hpack.HeaderField{Name: k, Value: encodeMetadataHeader(k, v)})
 		}
 	}
+
 	return headerFields, nil
 }
 
@@ -720,6 +754,7 @@ func (t *http2Client) getTrAuthData(ctx context.Context, audience string) (map[s
 	if len(t.perRPCCreds) == 0 {
 		return nil, nil
 	}
+
 	authData := map[string]string{}
 	for _, c := range t.perRPCCreds {
 		data, err := c.GetRequestMetadata(ctx, audience)
@@ -730,15 +765,18 @@ func (t *http2Client) getTrAuthData(ctx context.Context, audience string) (map[s
 
 			return nil, status.Errorf(codes.Unauthenticated, "transport: %v", err)
 		}
+
 		for k, v := range data {
 			// Capital header names are illegal in HTTP/2.
 			k = strings.ToLower(k)
 			authData[k] = v
 		}
 	}
+
 	return authData, nil
 }
 
+// 提取自定义校验字段信息
 func (t *http2Client) getCallAuthData(ctx context.Context, audience string, callHdr *CallHdr) (map[string]string, error) {
 	var callAuthData map[string]string
 	// Check if credentials.PerRPCCredentials were provided via call options.
@@ -751,10 +789,14 @@ func (t *http2Client) getCallAuthData(ctx context.Context, audience string, call
 				return nil, status.Error(codes.Unauthenticated, "transport: cannot send secure credentials on an insecure connection")
 			}
 		}
+
+		// 获取自定义 校验 字段信息
+		// GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error)
 		data, err := callCreds.GetRequestMetadata(ctx, audience)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "transport: %v", err)
 		}
+
 		callAuthData = make(map[string]string, len(data))
 		for k, v := range data {
 			// Capital header names are illegal in HTTP/2
@@ -762,6 +804,7 @@ func (t *http2Client) getCallAuthData(ctx context.Context, audience string, call
 			callAuthData[k] = v
 		}
 	}
+
 	return callAuthData, nil
 }
 
@@ -788,14 +831,19 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 			if !ok {
 				nse = &NewStreamError{Err: err}
 			}
+
 			if len(t.perRPCCreds) > 0 || callHdr.Creds != nil {
 				// We may have performed I/O in the per-RPC creds callback, so do not
 				// allow transparent retry.
+				//
+				// 我们可能已经在每个rpc信用回调中执行了I/O，所以不允许透明重试
 				nse.PerformedIO = true
 			}
 			err = nse
 		}
 	}()
+
+	// 把 t.getPeer() 添加到上下文
 	ctx = peer.NewContext(ctx, t.getPeer())
 
 	/////////////////////////////////////////
@@ -804,13 +852,18 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 	// 2. 添加头部字段信息
 	/////////////////////////////////////////
 
-	// 创建协议头字段，把客户端的信息封装在header中
+	// 创建协议头字段，把客户端的字段 封装在 header 中
+	//
+	// 添加 框架默认需要添加的字段 到 header
+	// 获取 AppendToOutgoingContext 之类方法 添加的字段 添加到 header
+	// 获取 用户自定义校验  添加的字段 添加到 header
+	// ... 等等
 	headerFields, err := t.createHeaderFields(ctx, callHdr)
 	if err != nil {
 		return nil, err
 	}
 
-	// 核心！！！！
+	// 创建一个 流stream 结构体
 	s := t.newStream(ctx, callHdr)
 
 	cleanup := func(err error) {
@@ -822,6 +875,7 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 		atomic.StoreUint32(&s.unprocessed, 1)
 		s.write(recvMsg{err: err})
 		close(s.done)
+
 		// If headerChan isn't closed, then close it.
 		if atomic.CompareAndSwapUint32(&s.headerChanClosed, 0, 1) {
 			close(s.headerChan)
@@ -831,7 +885,7 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 	// 创建 header帧 结构体
 	hdr := &headerFrame{
 		hf:        headerFields, // 帧头数据字段信息
-		endStream: false, // 是否结束标识
+		endStream: false,        // 是否是结束标识，因为是header，所以是 false
 		initStream: func(id uint32) error { // 帧发送器在发送headerFrame时调用
 			t.mu.Lock()
 			// 状态校验
@@ -842,16 +896,19 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 				if state == closing {
 					err = ErrConnClosing
 				}
+
 				cleanup(err)
 				return err
 			}
 
 			// 新创建的流 注册到 t.activeStreams[id]
 			t.activeStreams[id] = s
+
 			if channelz.IsOn() {
 				atomic.AddInt64(&t.czData.streamsStarted, 1)
 				atomic.StoreInt64(&t.czData.lastStreamCreatedTime, time.Now().UnixNano())
 			}
+
 			// If the keepalive goroutine has gone dormant, wake it up.
 			if t.kpDormant {
 				t.kpDormancyCond.Signal()
@@ -871,9 +928,11 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 			if firstTry {
 				t.waitingStreams++
 			}
+
 			ch = t.streamsQuotaAvailable
 			return false
 		}
+
 		if !firstTry {
 			t.waitingStreams--
 		}
@@ -916,21 +975,27 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 		return true
 	}
 
-	// for 循环
+	// 不停的尝试，直到把 header帧 加入到 controlBuf
 	for {
+		// 把 header帧 加入到 controlBuf
+		// TODO (学习该方法的使用方式：把校验策略交给用户)
 		success, err := t.controlBuf.executeAndPut(func(it interface{}) bool {
 			if !checkForStreamQuota(it) {
 				return false
 			}
+
 			if !checkForHeaderListSize(it) {
 				return false
 			}
 			return true
 		}, hdr)
+
+		// 添加时 有错误发生，退出循环
 		if err != nil {
 			return nil, err
 		}
 
+		// 添加成功，跳出循环
 		if success {
 			break
 		}
@@ -958,6 +1023,7 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 		} else {
 			header = metadata.Pairs("user-agent", t.userAgent)
 		}
+
 		// Note: The header fields are compressed with hpack after this call returns.
 		// No WireLength field is set here.
 		outHeader := &stats.OutHeader{
@@ -970,6 +1036,7 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 		}
 		t.statsHandler.HandleRPC(s.ctx, outHeader)
 	}
+
 	return s, nil
 }
 

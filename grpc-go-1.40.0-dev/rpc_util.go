@@ -151,6 +151,8 @@ func (d *gzipDecompressor) Type() string {
 }
 
 // callInfo contains all related configuration and information about an RPC.
+//
+// 包含关于rpc的配置信息
 type callInfo struct {
 	compressorType        string
 	failFast              bool
@@ -162,9 +164,10 @@ type callInfo struct {
 	maxRetryRPCBufferSize int
 }
 
+// rpc 的默认配置信息
 func defaultCallInfo() *callInfo {
 	return &callInfo{
-		failFast:              true,
+		failFast:              true, // 快速失败策略
 		maxRetryRPCBufferSize: 256 * 1024, // 256KB
 	}
 }
@@ -828,15 +831,17 @@ func Errorf(c codes.Code, format string, a ...interface{}) error {
 }
 
 // toRPCErr converts an error into an error from the status package.
+//
 func toRPCErr(err error) error {
+	// 特定类型的错误
 	switch err {
 	case nil, io.EOF:
 		return err
-	case context.DeadlineExceeded:
+	case context.DeadlineExceeded: // 超时
 		return status.Error(codes.DeadlineExceeded, err.Error())
-	case context.Canceled:
+	case context.Canceled: // 取消上下文
 		return status.Error(codes.Canceled, err.Error())
-	case io.ErrUnexpectedEOF:
+	case io.ErrUnexpectedEOF: // 内部错误
 		return status.Error(codes.Internal, err.Error())
 	}
 
@@ -844,6 +849,8 @@ func toRPCErr(err error) error {
 	case transport.ConnectionError:
 		return status.Error(codes.Unavailable, e.Desc)
 	case *transport.NewStreamError:
+		//NewStreamError 是一个结构体 type NewStreamError struct
+		// 结构体内 Err 字段保存具体错误，所以，递归，再调用一次 toRPCErr
 		return toRPCErr(e.Err)
 	}
 
@@ -851,10 +858,14 @@ func toRPCErr(err error) error {
 		return err
 	}
 
+	// 未知错误
 	return status.Error(codes.Unknown, err.Error())
 }
 
 // setCallInfoCodec should only be called after CallOptions have been applied.
+//
+// TODO（追源码）
+// 设置编码相关配置
 func setCallInfoCodec(c *callInfo) error {
 	if c.codec != nil {
 		// codec was already set by a CallOption; use it, but set the content

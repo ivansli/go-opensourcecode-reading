@@ -328,6 +328,9 @@ func (c *controlBuffer) put(it cbItem) error {
 	return err
 }
 
+// 把 帧 添加到 controlBuffer
+// f 为添加帧时的校验方法
+// it 为帧结构体
 func (c *controlBuffer) executeAndPut(f func(it interface{}) bool, it cbItem) (bool, error) {
 	var wakeUp bool
 	c.mu.Lock()
@@ -335,12 +338,15 @@ func (c *controlBuffer) executeAndPut(f func(it interface{}) bool, it cbItem) (b
 		c.mu.Unlock()
 		return false, c.err
 	}
+
 	if f != nil {
+		// 校验未成功
 		if !f(it) { // f wasn't successful
 			c.mu.Unlock()
 			return false, nil
 		}
 	}
+
 	if c.consumerWaiting {
 		wakeUp = true
 		c.consumerWaiting = false
@@ -366,6 +372,7 @@ func (c *controlBuffer) executeAndPut(f func(it interface{}) bool, it cbItem) (b
 		default:
 		}
 	}
+
 	return true, nil
 }
 

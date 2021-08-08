@@ -53,6 +53,7 @@ func (pw *pickerWrapper) updatePicker(p balancer.Picker) {
 		pw.mu.Unlock()
 		return
 	}
+
 	pw.picker = p
 	// pw.blockingCh should never be nil.
 	close(pw.blockingCh)
@@ -131,12 +132,14 @@ func (pw *pickerWrapper) pick(ctx context.Context, failfast bool, info balancer.
 		pw.mu.Unlock()
 
 		/////////////////////////////////////
-		// ！！！重要 ！！！
-		// 负载均衡选择器选择一个可用连接
+		// TODO (追源码)
+		//  ！！！重要 ！！！
+		//  负载均衡选择器选择一个可用连接
 		/////////////////////////////////////
 
 		// 例如 roundrobin 的 pick 方法
 		// balancer/roundrobin/roundrobin.go
+		// pickResult 为获取的一个连接
 		pickResult, err := p.Pick(info)
 
 		if err != nil {
@@ -149,13 +152,17 @@ func (pw *pickerWrapper) pick(ctx context.Context, failfast bool, info balancer.
 			}
 			// For all other errors, wait for ready RPCs should block and other
 			// RPCs should fail with unavailable.
+			//
+			// 如果不是快速失败，则继续重试，否则立刻返回错误
 			if !failfast {
 				lastPickErr = err
 				continue
 			}
+
 			return nil, nil, status.Error(codes.Unavailable, err.Error())
 		}
 
+		// 断言
 		acw, ok := pickResult.SubConn.(*acBalancerWrapper)
 		if !ok {
 			logger.Error("subconn returned from pick is not *acBalancerWrapper")
@@ -168,7 +175,7 @@ func (pw *pickerWrapper) pick(ctx context.Context, failfast bool, info balancer.
 				return t, doneChannelzWrapper(acw, pickResult.Done), nil
 			}
 
-			// t 就是准备好的连接
+			// t 就是准备好的连接， pickResult.Done 是 func(DoneInfo)
 			return t, pickResult.Done, nil
 		}
 
@@ -177,6 +184,7 @@ func (pw *pickerWrapper) pick(ctx context.Context, failfast bool, info balancer.
 			// DoneInfo with default value works.
 			pickResult.Done(balancer.DoneInfo{})
 		}
+
 		logger.Infof("blockingPicker: the picked transport is not ready, loop back to repick")
 		// If ok == false, ac.state is not READY.
 		// A valid picker always returns READY subConn. This means the state of ac

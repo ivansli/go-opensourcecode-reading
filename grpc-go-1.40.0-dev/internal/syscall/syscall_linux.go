@@ -47,6 +47,7 @@ func GetCPUTime() int64 {
 type Rusage = syscall.Rusage
 
 // GetRusage returns the resource usage of current process.
+// 返回 当前进程的资源使用情况
 func GetRusage() *Rusage {
 	rusage := new(Rusage)
 	syscall.Getrusage(syscall.RUSAGE_SELF, rusage)
@@ -55,6 +56,7 @@ func GetRusage() *Rusage {
 
 // CPUTimeDiff returns the differences of user CPU time and system CPU time used
 // between two Rusage structs.
+//
 func CPUTimeDiff(first *Rusage, latest *Rusage) (float64, float64) {
 	var (
 		utimeDiffs  = latest.Utime.Sec - first.Utime.Sec

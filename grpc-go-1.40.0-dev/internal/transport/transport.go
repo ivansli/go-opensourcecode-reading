@@ -597,6 +597,7 @@ type ConnectOptions struct {
 //
 // 使用所需的ConnectOptions建立传输，并将其返回给调用者。
 func NewClientTransport(connectCtx, ctx context.Context, addr resolver.Address, opts ConnectOptions, onPrefaceReceipt func(), onGoAway func(GoAwayReason), onClose func()) (ClientTransport, error) {
+	// 返回一个 http2Client 对象
 	return newHTTP2Client(connectCtx, ctx, addr, opts, onPrefaceReceipt, onGoAway, onClose)
 }
 

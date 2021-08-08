@@ -39,9 +39,12 @@ import (
 type ccResolverWrapper struct {
 	cc         *ClientConn
 	resolverMu sync.Mutex
-	resolver   resolver.Resolver
-	done       *grpcsync.Event
-	curState   resolver.State
+
+	// 具体的名称解析器
+	resolver resolver.Resolver
+
+	done     *grpcsync.Event
+	curState resolver.State
 
 	incomingMu sync.Mutex // Synchronizes all the incoming calls.
 }
@@ -52,8 +55,7 @@ type ccResolverWrapper struct {
 // 使用 resolver.Builder 取创建一个 Resolver 并且返回一个被包裹的对象 ccResolverWrapper
 func newCCResolverWrapper(cc *ClientConn, rb resolver.Builder) (*ccResolverWrapper, error) {
 	// 对 名称解析器对象、解析出的服务端列表、客户端连接对象 的封装
-	// ccr 是名称解析器的包装对象
-	// 它实现了  resolver.ClientConn  接口
+	// ccr 是名称解析器的包装对象，它实现了 resolver.ClientConn 接口
 	ccr := &ccResolverWrapper{
 		cc:   cc,                  // *grpc.ClientConn
 		done: grpcsync.NewEvent(), // 一个事件对象，通过它可以来检测是否关闭
@@ -64,7 +66,7 @@ func newCCResolverWrapper(cc *ClientConn, rb resolver.Builder) (*ccResolverWrapp
 		credsClone = creds.Clone()
 	}
 
-	// 名称解析器的构建器选项
+	// 名称解析器的构建器选项，用来创建 名称解析器 时使用
 	rbo := resolver.BuildOptions{
 		DisableServiceConfig: cc.dopts.disableServiceConfig,
 		DialCreds:            credsClone,
@@ -85,7 +87,6 @@ func newCCResolverWrapper(cc *ClientConn, rb resolver.Builder) (*ccResolverWrapp
 	///////////////////////////////////////////////////////////////////////
 	// 调用 resolver.Builder 的 Build 方法
 	// 以 passthrough internal/resolver/passthrough/passthrough.go 为例
-	// ！！！核心
 	//
 	// 通过 名称解析器构建器 创建一个新的 名称解析器对象
 	// ccr.resolver 存储 名称解析器 对象
@@ -95,18 +96,18 @@ func newCCResolverWrapper(cc *ClientConn, rb resolver.Builder) (*ccResolverWrapp
 	// 2. 调用 conn 的 grpc-go/clientconn.go 的 UpdateState()方法
 	// 	  把地址列表 resolver.State 更新到 cc 的 负载均衡对象 balancer.ClientConnState 中
 	///////////////////////////////////////////////////////////////////////
+
 	// 这里的 Build 调用的是名称解析器构建器的 Build 方法
 	// 获取具体的 名称解析器
 	//
 	// 调用 rb.Build 之后就需要在方法内创建连接了！！！
 	// rbo 参数是 构造器的初始化配置参数
 	//
-	// ！！！！重要 ！！！！
 	// 在 rb.Build 方法签名中，ccr 是 resolver.ClientConn 接口类型
 	//
 	// 在 Build 的执行过程中，会把 cc.parsedTarget 解析成具体的服务端地址列表
 	// 获取地址列表之后，一般做2件事：
-	// 1.调用 ccResolverWrapper 的 UpdateState方法(当前文件中) 更新服务端地址到负载均衡器中
+	// 1.调用 ccResolverWrapper 的 UpdateState 方法(当前文件中) 更新服务端地址到负载均衡器中
 	// 2.可能开启新的协程监听 cc.parsedTarget 背后的服务端地址变化，变化后再次调用 UpdateState
 	ccr.resolver, err = rb.Build(cc.parsedTarget, ccr, rbo)
 
@@ -136,9 +137,9 @@ func (ccr *ccResolverWrapper) close() {
 	ccr.resolverMu.Unlock()
 }
 
-// ！！！更新状态，包含建立连接的逻辑
-//
-// s resolver.State : 为解析器解析出来的所有服务端可用地址
+// TODO (read code)
+//  更新状态，包含建立连接的逻辑
+//  s resolver.State : 为解析器解析出来的所有服务端可用地址
 func (ccr *ccResolverWrapper) UpdateState(s resolver.State) error {
 	// 加锁，因为可能会有多个协程调用此方法进行更新
 	//
@@ -149,7 +150,8 @@ func (ccr *ccResolverWrapper) UpdateState(s resolver.State) error {
 	defer ccr.incomingMu.Unlock()
 
 	// 检测是否已经取消了后续操作
-	// TODO 学习 ccr.done 对 Event 事件的封装
+	// TODO (学习 Event 结构的使用技巧)
+	//  ccr.done 对 Event 事件的封装
 	if ccr.done.HasFired() {
 		return nil
 	}
@@ -170,10 +172,11 @@ func (ccr *ccResolverWrapper) UpdateState(s resolver.State) error {
 	// ccr.cc 是 grpc.ClientConn
 	// updateResolverState 就是 clientconn.go 中的 updateResolverState 方法
 	//
-	// 下面就要开始 听过负载均衡器选择对应的地址来创建 连接
+	// 下面就要开始 通过负载均衡器选择对应的地址来创建 连接
 	if err := ccr.cc.updateResolverState(ccr.curState, nil); err == balancer.ErrBadResolverState {
 		return balancer.ErrBadResolverState
 	}
+
 	return nil
 }
 

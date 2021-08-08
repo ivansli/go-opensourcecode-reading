@@ -103,6 +103,7 @@ func dial(ctx context.Context, insecure bool, opts ...ClientOption) (*grpc.Clien
 		// 使用的负载均衡器 为 roundrobin
 		// 在引入 roundrobin 包的时候，就已经把该 负载均衡器进行了注册
 		grpc.WithBalancerName(roundrobin.Name),
+
 		grpc.WithChainUnaryInterceptor(ints...),
 	}
 
@@ -111,6 +112,13 @@ func dial(ctx context.Context, insecure bool, opts ...ClientOption) (*grpc.Clien
 		// grpc.WithResolvers() 指定名称解析器构建器
 		// 这里的 构建器为 kratos-2.0.0/transport/grpc/resolver/discovery/builder.go  builder
 		// 添加 名称解析器的构建器
+
+		// discovery.NewBuilder(options.discovery) 创建一个 名称解析器的构造器
+		// 直接把 discovery.NewBuilder 对象赋值给 Dialoptions.resolvers
+		// 根据scheme查找构造器的时候
+		//	会遍历所有 Dialoptions.resolvers 的 构造器，然后调用Scheme()方法 对比
+		//
+		// 不用显式的使用 resolver.Register()进行注册
 		grpcOpts = append(grpcOpts, grpc.WithResolvers(discovery.NewBuilder(options.discovery)))
 	}
 

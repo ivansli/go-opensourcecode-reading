@@ -42,7 +42,7 @@ func (bb *baseBuilder) Build(cc balancer.ClientConn, opt balancer.BuildOptions) 
 	// cc 为负载均衡包装器，被包含在了 负载均衡器 中
 	// cc 为 balancer_conn_wrappers.go 的 ccBalancerWrapper 结构体
 	bal := &baseBalancer{
-		cc:            cc,
+		cc:            cc, // cc 为 ccBalancerWrapper
 		pickerBuilder: bb.pickerBuilder,
 
 		subConns: make(map[resolver.Address]subConnInfo),
@@ -105,6 +105,7 @@ func (b *baseBalancer) ResolverError(err error) {
 		// report an error.
 		return
 	}
+
 	b.regeneratePicker()
 	b.cc.UpdateState(balancer.State{
 		ConnectivityState: b.state,
@@ -112,9 +113,9 @@ func (b *baseBalancer) ResolverError(err error) {
 	})
 }
 
-// ！！！TODO 追代码
-// 使用 roundrobin 负载均衡器时 在这里 不仅建立连接，还针对不同地址建立的连接进行状态更新
-// 还会有其他负载均衡算法
+// TODO （read code）
+//  使用 roundrobin 负载均衡器时 在这里 不仅建立连接，还针对不同地址建立的连接进行状态更新
+//  还会有其他负载均衡算法
 //
 // 最终 创建的连接 存储在 b.subConns 对象中
 // 在真正请求远端时，由负载均衡器来 选择(pick) 一个连接
@@ -129,10 +130,12 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 	b.resolverErr = nil
 
 	// addrsSet is the set converted from addrs, it's used for quick lookup of an address.
-	// addrsSet 是从 addrs 转换而来的集合，它用于快速查找地址
+	//
+	// addrsSet 主要用来记录 s.ResolverState.Addresses 中出现的地址
+	// 	  出现在 b.subConns 但是没出现在 addrsSet 中的地址连接将被移除
 	addrsSet := make(map[resolver.Address]struct{})
 
-	// TODO 追代码
+	// TODO （追代码）
 	// 对每一个地址建立一个连接
 	// 等invoke调用的时候，选取一个地址，然后获取它对应的连接直接使用
 	for _, a := range s.ResolverState.Addresses {
@@ -179,7 +182,7 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 			// 在创建SubConn时，将传递带有属性的原始地址
 			// 因此，属性中的连接配置(如creds)将被使用
 
-			// 对每一个还没建立连接信息的 地址创建 SubConn 对象，保存连接信息
+			// 对每一个没建立连接信息的 地址创建 SubConn 对象，保存连接信息
 			//
 			// b.cc 为  balancer.ClientConn 接口类型
 			//
@@ -194,6 +197,7 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 			}
 
 			b.subConns[aNoAttrs] = subConnInfo{subConn: sc, attrs: a.Attributes}
+			// 设置状态 为 idle
 			b.scStates[sc] = connectivity.Idle
 
 			///////////////////////////////////////////////
@@ -223,6 +227,17 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 			b.subConns[aNoAttrs] = scInfo
 
 			// TODO 追源码
+			// b.cc 为接口
+			// type ClientConn interface {
+			//    NewSubConn([]resolver.Address, NewSubConnOptions) (SubConn, error)
+			//    RemoveSubConn(SubConn)
+			//    UpdateAddresses(SubConn, []resolver.Address)
+			//    UpdateState(State)
+			//    ResolveNow(resolver.ResolveNowOptions)
+			//    Target() string
+			// }
+			//
+			// b.cc 为  balancer_conn_wrappers.go 中 ccBalancerWrapper 结构体
 			b.cc.UpdateAddresses(scInfo.subConn, []resolver.Address{a})
 		}
 	}
@@ -280,6 +295,7 @@ func (b *baseBalancer) regeneratePicker() {
 		b.picker = NewErrPicker(b.mergeErrors())
 		return
 	}
+
 	readySCs := make(map[balancer.SubConn]SubConnInfo)
 
 	// Filter out all ready SCs from full subConn map.
@@ -289,6 +305,7 @@ func (b *baseBalancer) regeneratePicker() {
 			readySCs[scInfo.subConn] = SubConnInfo{Address: addr}
 		}
 	}
+
 	b.picker = b.pickerBuilder.Build(PickerBuildInfo{ReadySCs: readySCs})
 }
 

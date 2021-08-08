@@ -36,5 +36,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	log.Printf("[grpc] SayHello %+v\n", reply)
 }

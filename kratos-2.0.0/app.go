@@ -53,6 +53,8 @@ func (a *App) Run() error {
 	if err != nil {
 		return err
 	}
+
+	// 把 AppInfo 信息添加到上下文中
 	ctx := NewContext(a.ctx, AppInfo{
 		ID:        instance.ID,
 		Name:      instance.Name,
@@ -60,29 +62,41 @@ func (a *App) Run() error {
 		Metadata:  instance.Metadata,
 		Endpoints: instance.Endpoints,
 	})
+
+	// 创建上下文
 	eg, ctx := errgroup.WithContext(ctx)
 	wg := sync.WaitGroup{}
+
 	for _, srv := range a.opts.servers {
 		srv := srv
 		eg.Go(func() error {
 			<-ctx.Done() // wait for stop signal
 			return srv.Stop(ctx)
 		})
+
 		wg.Add(1)
+
 		eg.Go(func() error {
 			wg.Done()
 			return srv.Start(ctx)
 		})
 	}
+
+	// 等待 a.opts.servers 中需要启动的服务 srv.Start(ctx) 都通过其他新的协程启动
 	wg.Wait()
 
-	// 服务注册
+	// ！！！！服务注册
+	// 把当前服务地址信息注册到etcd中
 	if a.opts.registrar != nil {
+		// go-kratos/etcd@v0.1.0/registry/registry.go
+		// 把服务地址信息 instance 注册到etcd
 		if err := a.opts.registrar.Register(a.opts.ctx, instance); err != nil {
 			return err
 		}
 		a.instance = instance
 	}
+
+	// 监听信号
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, a.opts.sigs...)
 	eg.Go(func() error {
@@ -91,10 +105,12 @@ func (a *App) Run() error {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-c:
-				a.Stop()
+				// 优雅退出
+				return a.Stop()
 			}
 		}
 	})
+
 	if err := eg.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
@@ -102,12 +118,15 @@ func (a *App) Run() error {
 }
 
 // Stop gracefully stops the application.
+// 优雅退出
 func (a *App) Stop() error {
+	// 从etcd删除注册的信息
 	if a.opts.registrar != nil && a.instance != nil {
 		if err := a.opts.registrar.Deregister(a.opts.ctx, a.instance); err != nil {
 			return err
 		}
 	}
+
 	if a.cancel != nil {
 		a.cancel()
 	}

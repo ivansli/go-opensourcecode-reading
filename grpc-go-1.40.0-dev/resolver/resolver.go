@@ -97,7 +97,7 @@ const (
 )
 
 // Address represents a server the client connects to.
-// Address 表示客户端连接到的服务器
+// Address 表示[客户端连接到的]服务器
 //
 // Experimental
 //
@@ -145,18 +145,21 @@ type BuildOptions struct {
 	// DisableServiceConfig indicates whether a resolver implementation should
 	// fetch service config data.
 	DisableServiceConfig bool
+
 	// DialCreds is the transport credentials used by the ClientConn for
 	// communicating with the target gRPC service (set via
 	// WithTransportCredentials). In cases where a name resolution service
 	// requires the same credentials, the resolver may use this field. In most
 	// cases though, it is not appropriate, and this field may be ignored.
 	DialCreds credentials.TransportCredentials
+
 	// CredsBundle is the credentials bundle used by the ClientConn for
 	// communicating with the target gRPC service (set via
 	// WithCredentialsBundle). In cases where a name resolution service
 	// requires the same credentials, the resolver may use this field. In most
 	// cases though, it is not appropriate, and this field may be ignored.
 	CredsBundle credentials.Bundle
+
 	// Dialer is the custom dialer used by the ClientConn for dialling the
 	// target gRPC service (set via WithDialer). In cases where a name
 	// resolution service requires the same dialer, the resolver may use this
@@ -188,7 +191,8 @@ type State struct {
 
 // ClientConn contains the callbacks for resolver to notify any updates
 // to the gRPC ClientConn.
-// ClientConn 包含一个回调函数，用于通知任何对gRPC ClientConn的更新
+//
+// ClientConn 包含一个回调函数，用于通知任何对 gRPC ClientConn 的更新
 //
 // This interface is to be implemented by gRPC. Users should not need a
 // brand new implementation of this interface. For the situations like

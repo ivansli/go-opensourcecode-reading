@@ -22,18 +22,23 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/coreos/etcd/clientv3"
-	"github.com/coreos/etcd/proxy/grpcproxy"
+	"github.com/pkg/errors"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"log"
 	"net"
-	"time"
+	"strings"
 
 	"google.golang.org/grpc"
 
 	pb "google.golang.org/grpc/examples/features/proto/echo"
 )
 
-const addr = "localhost:50051"
+const (
+	addr = "localhost:50051"
+
+	EtcdScheme      = "etcd"
+	EtcdServiceName = "helloworld"
+)
 
 type ecServer struct {
 	pb.UnimplementedEchoServer
@@ -44,37 +49,6 @@ func (s *ecServer) UnaryEcho(ctx context.Context, req *pb.EchoRequest) (*pb.Echo
 	return &pb.EchoResponse{Message: fmt.Sprintf("%s (from %s)", req.Message, s.addr)}, nil
 }
 
-// 注册服务到etcd中
-func service(port string) error {
-	etcdv3cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   []string{"http://localhost:2379"},
-		DialTimeout: 60 * time.Second,
-	})
-	if err != nil {
-		return err
-	}
-	defer etcdv3cli.Close()
-
-	// 服务地址
-	target := fmt.Sprintf("/etcdv3://go-program/grpc/%s", "service")
-	// ！！！
-	// 服务端注册服务信息到etcd中
-	//
-	// Register registers itself as a grpc-proxy server by writing prefixed-key
-	// with session of specified TTL (in seconds). The returned channel is closed
-	// when the client's context is canceled.
-	//
-	//
-	// func Register(c *clientv3.Client, prefix string, addr string, ttl int) <-chan struct{}
-	//
-	// 把当前服务器的地址 "localhost:50051" 注册到 etcd 的 target 路径中
-	// 并设置ttl为60秒
-	grpcproxy.Register(etcdv3cli, target, ":"+port, 60)
-
-	return nil
-	//return http.ListenAndServe(":"+port, nil)
-}
-
 func main() {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -83,12 +57,51 @@ func main() {
 	s := grpc.NewServer()
 	pb.RegisterEchoServer(s, &ecServer{addr: addr})
 
-	// ！！！重要
-	// 注册服务到etcd
-	service(addr)
+	ctx := context.Background()
+
+	// etcd 客户端
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints: []string{"127.0.0.1:2379"},
+	})
+	if err != nil {
+		panic(err)
+	}
+	// 服务注册
+	go Register(ctx, cli, EtcdServiceName, addr)
 
 	log.Printf("serving on %s\n", addr)
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
+	}
+}
+
+// 服务端注册 到 etcd
+func Register(ctx context.Context, client *clientv3.Client, service, self string) error {
+	resp, err := client.Grant(ctx, 2)
+	if err != nil {
+		return errors.Wrap(err, "etcd grant")
+	}
+
+	// 把服务端地址self 注册到etcd中
+	_, err = client.Put(ctx, strings.Join([]string{service, self}, "/"), self, clientv3.WithLease(resp.ID))
+	if err != nil {
+		return errors.Wrap(err, "etcd put")
+	}
+
+	// 保持长连接
+	// respCh 需要消耗, 不然会有 warning
+	respCh, err := client.KeepAlive(ctx, resp.ID)
+	if err != nil {
+		return errors.Wrap(err, "etcd keep alive")
+	}
+
+	// 一定要有这个
+	// respCh 需要消耗, 不然会有 warning
+	for {
+		select {
+		case <-ctx.Done(): // 上下文 取消或超时
+			return nil
+		case <-respCh:
+		}
 	}
 }

@@ -30,23 +30,23 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// 生成 registry 对象
+	// 生成 registry 对象（用于注册地址信息到etcd）
 	r := registry.New(client)
 
 	grpcSrv := grpc.NewServer(
 		grpc.Address(":9000"),
 	)
-	s := &server{}
-	pb.RegisterGreeterServer(grpcSrv, s)
+	pb.RegisterGreeterServer(grpcSrv, &server{})
 
 	app := kratos.New(
 		kratos.Name("helloworld"),
 		kratos.Server(
 			grpcSrv,
 		),
-		// ！！！服务注册
+		// ！！服务注册发现 的 服务注册，注册到etcd
 		kratos.Registrar(r),
 	)
+
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}

@@ -1,172 +1,81 @@
-/*
- *
- * Copyright 2018 gRPC authors.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
-
-// Binary client is an example client.
+// 服务发现使用 etcd 名称解析
 package main
 
 import (
 	"context"
 	"fmt"
-	clientv3 "github.com/coreos/etcd/clientv3"
-	"github.com/coreos/etcd/clientv3/naming"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"log"
 	"time"
 
 	"google.golang.org/grpc"
+	ecpb "google.golang.org/grpc/examples/features/proto/echo"
 )
 
 const (
-	exampleScheme      = "example"
-	exampleServiceName = "resolver.example.grpc.io"
+	// etcd resolver 负责的 scheme 类型
+	EtcdScheme      = "etcd"       //scheme
+	EtcdServiceName = "helloworld" // 服务名
 
-	backendAddr = "localhost:50051"
+	defaultFreq = time.Minute * 30
 )
 
-//func callUnaryEcho(c ecpb.EchoClient, message string) {
-//	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-//	defer cancel()
-//
-//	r, err := c.UnaryEcho(ctx, &ecpb.EchoRequest{Message: message})
-//	if err != nil {
-//		log.Fatalf("could not greet: %v", err)
-//	}
-//	fmt.Println(r.Message)
-//}
-//
-//func makeRPCs(cc *grpc.ClientConn, n int) {
-//	hwc := ecpb.NewEchoClient(cc)
-//	for i := 0; i < n; i++ {
-//		callUnaryEcho(hwc, "this is examples/name_resolving")
-//	}
-//}
+func callUnaryEcho(c ecpb.EchoClient, message string) {
+	// 带有超时控制
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 
-// 设置负载均衡器，获取client
-func getClientConn(ctx context.Context, serviceName string, opts []grpc.DialOption) (*grpc.ClientConn, error) {
-	// 获取etcd连接
-	config := clientv3.Config{
-		Endpoints:   []string{"http://localhost:2379"},
-		DialTimeout: 60 * time.Second,
-	}
-	etcdv3Client, err := clientv3.New(config)
+	r, err := c.UnaryEcho(ctx, &ecpb.EchoRequest{Message: message})
 	if err != nil {
-		return nil, err
+		log.Fatalf("could not greet: %v", err)
 	}
+	fmt.Println(r.Message)
+}
 
-	r := &naming.GRPCResolver{Client: etcdv3Client}
-	target := fmt.Sprintf("/etcdv3://go-program/grpc/%s", serviceName)
-
-	opts = append(opts, grpc.WithBlock(),
-		// 设置负载均衡器
-		grpc.WithBalancer(grpc.RoundRobin(r)),
-
-		//grpc.WithDefaultServiceConfig(),
-		grpc.WithInsecure(),
-	)
-
-	// target 为服务端地址，这里不是具体的ip，而是一个服务名 需要 名称解析器 解析
-	return grpc.DialContext(ctx, target, opts...)
+// 多次请求rpc，分别负载到不停的服务端地址上
+func makeRPCs(cc *grpc.ClientConn, n int) {
+	hwc := ecpb.NewEchoClient(cc)
+	for i := 0; i < n; i++ {
+		callUnaryEcho(hwc, "this is examples/name_resolving")
+	}
 }
 
 func main() {
-	ctx := context.Background()
-	_, err := getClientConn(ctx, "service", nil)
+	// etcd 客户端
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints: []string{"127.0.0.1:2379"},
+	})
 	if err != nil {
-		log.Fatal(err)
+		panic(err)
 	}
-	//passthroughConn, err := grpc.Dial(
-	//	fmt.Sprintf("passthrough:///%s", backendAddr), // Dial to "passthrough:///localhost:50051"
-	//	grpc.WithInsecure(),
-	//	grpc.WithBlock(),
-	//)
-	//if err != nil {
-	//	log.Fatalf("did not connect: %v", err)
-	//}
-	//defer passthroughConn.Close()
-	//
-	//fmt.Printf("--- calling helloworld.Greeter/SayHello to \"passthrough:///%s\"\n", backendAddr)
-	//makeRPCs(passthroughConn, 10)
-	//
-	//fmt.Println()
-	//
-	//exampleConn, err := grpc.Dial(
-	//	fmt.Sprintf("%s:///%s", exampleScheme, exampleServiceName), // Dial to "example:///resolver.example.grpc.io"
-	//	grpc.WithInsecure(),
-	//	grpc.WithBlock(),
-	//)
-	//if err != nil {
-	//	log.Fatalf("did not connect: %v", err)
-	//}
-	//defer exampleConn.Close()
-	//
-	//fmt.Printf("--- calling helloworld.Greeter/SayHello to \"%s:///%s\"\n", exampleScheme, exampleServiceName)
-	//makeRPCs(exampleConn, 10)
+
+	etcdResolverConn, err := grpc.Dial(
+		// 这里使用 'example:///resolver.example.grpc.io' 作为服务端地址
+		// 这里的地址需要名称解析器进行解析到正确的ip地址
+		// 这里的 协议 example 已经在 init() 中注册到了明湖曾解析器
+		// 所以名称解析器可以正确的识别 example 协议，并获取对应的服务端地址
+
+		// EtcdScheme 用于找到名称解析器的构造器
+		// EtcdServiceName 是服务端进行服务注册时 设置的 etcd key 前缀
+		fmt.Sprintf("%s:///%s", EtcdScheme, EtcdServiceName), // Dial to "example:///resolver.example.grpc.io"
+		grpc.WithInsecure(),
+		grpc.WithBlock(),
+
+		// !!!!
+		// 注册名称解析器的构造器
+		grpc.WithResolvers(NewBuilder(cli)),
+		// 指定负载均衡器
+		grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"round_robin"}`),
+	)
+
+	if err != nil {
+		log.Fatalf("did not connect: %v", err)
+	}
+	// 用完 记得关闭哦
+	defer etcdResolverConn.Close()
+
+	fmt.Printf("--- calling helloworld.Greeter/SayHello to \"%s:///%s\"\n", EtcdScheme, EtcdServiceName)
+	makeRPCs(etcdResolverConn, 10)
 }
 
-// Following is an example name resolver. It includes a
-// ResolverBuilder(https://godoc.org/google.golang.org/grpc/resolver#Builder)
-// and a Resolver(https://godoc.org/google.golang.org/grpc/resolver#Resolver).
-//
-// A ResolverBuilder is registered for a scheme (in this example, "example" is
-// the scheme). When a ClientConn is created for this scheme, the
-// ResolverBuilder will be picked to build a Resolver. Note that a new Resolver
-// is built for each ClientConn. The Resolver will watch the updates for the
-// target, and send updates to the ClientConn.
 
-// exampleResolverBuilder is a
-// ResolverBuilder(https://godoc.org/google.golang.org/grpc/resolver#Builder).
-//type exampleResolverBuilder struct{}
-//
-//func (*exampleResolverBuilder) Build(target resolver.Target, cc resolver.ClientConn, opts resolver.BuildOptions) (resolver.Resolver, error) {
-//	r := &exampleResolver{
-//		target: target,
-//		cc:     cc,
-//		addrsStore: map[string][]string{
-//			exampleServiceName: {backendAddr},
-//		},
-//	}
-//	r.start()
-//	return r, nil
-//}
-//func (*exampleResolverBuilder) Scheme() string { return exampleScheme }
-//
-//// exampleResolver is a
-//// Resolver(https://godoc.org/google.golang.org/grpc/resolver#Resolver).
-//type exampleResolver struct {
-//	target     resolver.Target
-//	cc         resolver.ClientConn
-//	addrsStore map[string][]string
-//}
-//
-//func (r *exampleResolver) start() {
-//	addrStrs := r.addrsStore[r.target.Endpoint]
-//	addrs := make([]resolver.Address, len(addrStrs))
-//	for i, s := range addrStrs {
-//		addrs[i] = resolver.Address{Addr: s}
-//	}
-//
-//	// resolver_conn_wrapper.go 中 UpdateState 方法，来更新地址列表
-//	r.cc.UpdateState(resolver.State{Addresses: addrs})
-//}
-//func (*exampleResolver) ResolveNow(o resolver.ResolveNowOptions) {}
-//func (*exampleResolver) Close()                                  {}
-//
-//func init() {
-//	// Register the example ResolverBuilder. This is usually done in a package's
-//	// init() function.
-//	resolver.Register(&exampleResolverBuilder{})
-//}

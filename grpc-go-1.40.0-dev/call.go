@@ -46,6 +46,7 @@ func (cc *ClientConn) Invoke(ctx context.Context, method string, args, reply int
 	// 多个拦截器存在的话 则逻辑类似 洋葱模型
 	// 一层层包裹，真正的调用远端逻辑在最内层
 	//////////////////////////////////////////////
+	// 在 cc.dopts.unaryInt 拦截器中 会调用 invoke
 	if cc.dopts.unaryInt != nil {
 		return cc.dopts.unaryInt(ctx, method, args, reply, cc, invoke, opts...)
 	}
@@ -93,12 +94,17 @@ func invoke(ctx context.Context, method string, req, reply interface{}, cc *Clie
 
 	// method 就是请求远端的方法
 	// cc grpc.ClientConn
+	//
+	// 每一个方法都会生成一个 ClientStream
 	cs, err := newClientStream(ctx, unaryStreamDesc, cc, method, opts...)
 	if err != nil {
 		return err
 	}
 
 	// req 入参
+	// 发送请求参数
+	// stream.go
+	// func (cs *clientStream) SendMsg(m interface{}) (err error)
 	if err := cs.SendMsg(req); err != nil {
 		return err
 	}

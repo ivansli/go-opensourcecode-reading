@@ -105,6 +105,8 @@ func main() {
 		// passthrough.NewBuilder() 也可以是自己实现的构造器对象，例如 etcd等
 		grpc.WithResolvers(passthrough.NewBuilder()),
 		// 设置负载均衡器的构造器
+		// 在加载 roundrobin 文件时
+		// 已经通过 init调用 balancer.Register(newBuilder())，进行了构造器注册
 		grpc.WithBalancerName(roundrobin.Name),
 
 		// 将被弃用

@@ -40,6 +40,8 @@ type Event struct {
 // Fire 激发、引发
 //
 func (e *Event) Fire() bool {
+	// ret 表示当前是否是真正执行了 Do() 方法
+	// 只有第一个执行的协程才会返回true， 其他都是false
 	ret := false
 	e.o.Do(func() {
 		atomic.StoreInt32(&e.fired, 1)
@@ -51,7 +53,7 @@ func (e *Event) Fire() bool {
 
 // Done returns a channel that will be closed when Fire is called.
 //
-// 返回一个 chan， 当Fire调用时关闭chan
+// 返回一个当 Fire 被调用时会关闭的通道
 func (e *Event) Done() <-chan struct{} {
 	return e.c
 }

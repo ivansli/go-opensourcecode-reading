@@ -87,11 +87,13 @@ func FromError(err error) (s *Status, ok bool) {
 	if err == nil {
 		return nil, true
 	}
+
 	if se, ok := err.(interface {
 		GRPCStatus() *Status
 	}); ok {
 		return se.GRPCStatus(), true
 	}
+
 	return New(codes.Unknown, err.Error()), false
 }
 
@@ -109,11 +111,13 @@ func Code(err error) codes.Code {
 	if err == nil {
 		return codes.OK
 	}
+
 	if se, ok := err.(interface {
 		GRPCStatus() *Status
 	}); ok {
 		return se.GRPCStatus().Code()
 	}
+
 	return codes.Unknown
 }
 

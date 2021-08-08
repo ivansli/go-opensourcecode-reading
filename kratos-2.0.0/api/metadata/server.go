@@ -43,20 +43,25 @@ func (s *Server) load() error {
 	if len(s.services) > 0 {
 		return nil
 	}
+
 	if s.srv != nil {
+		// 获取服务 提供的方法名称信息
 		for name, info := range s.srv.GetServiceInfo() {
 			fdenc, ok := parseMetadata(info.Metadata)
 			if !ok {
 				return fmt.Errorf("invalid service %s metadata", name)
 			}
+
 			fd, err := decodeFileDesc(fdenc)
 			if err != nil {
 				return err
 			}
+
 			protoSet, err := allDependency(fd)
 			if err != nil {
 				return err
 			}
+
 			s.services[name] = &dpb.FileDescriptorSet{File: protoSet}
 			for _, method := range info.Methods {
 				s.methods[name] = append(s.methods[name], method.Name)
@@ -64,7 +69,10 @@ func (s *Server) load() error {
 		}
 		return nil
 	}
+
 	var err error
+
+	// protobuf 的 RangeFiles
 	protoregistry.GlobalFiles.RangeFiles(func(fd protoreflect.FileDescriptor) bool {
 		if fd.Services() != nil {
 			for i := 0; i < fd.Services().Len(); i++ {
@@ -74,15 +82,18 @@ func (s *Server) load() error {
 					err = e
 					return false
 				}
+
 				fdps, e := allDependency(fdp)
 				if e != nil {
 					err = e
 					return false
 				}
+
 				s.services[string(svc.FullName())] = &dpb.FileDescriptorSet{File: fdps}
 				if svc.Methods() != nil {
 					for j := 0; j < svc.Methods().Len(); j++ {
 						method := svc.Methods().Get(j)
+
 						s.methods[string(svc.FullName())] = append(s.methods[string(svc.FullName())], string(method.Name()))
 					}
 				}
@@ -104,6 +115,7 @@ func (s *Server) ListServices(ctx context.Context, in *ListServicesRequest) (*Li
 	for name := range s.services {
 		reply.Services = append(reply.Services, name)
 	}
+
 	for name, methods := range s.methods {
 		for _, method := range methods {
 			reply.Methods = append(reply.Methods, fmt.Sprintf("/%s/%s", name, method))

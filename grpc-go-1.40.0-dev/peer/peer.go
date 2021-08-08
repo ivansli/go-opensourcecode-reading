@@ -18,6 +18,8 @@
 
 // Package peer defines various peer information associated with RPCs and
 // corresponding utils.
+//
+// 包 peer 定义了与rpc和相应的utils相关联的各种对等体信息
 package peer
 
 import (
@@ -29,6 +31,8 @@ import (
 
 // Peer contains the information of the peer for an RPC, such as the address
 // and authentication information.
+//
+// Peer 包含RPC的 Peer 信息，如地址、认证信息等
 type Peer struct {
 	// Addr is the peer address.
 	Addr net.Addr

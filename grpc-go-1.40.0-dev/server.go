@@ -639,7 +639,7 @@ type ServiceRegistrar interface {
 // invoking Serve. If ss is non-nil (for legacy code), its type is checked to
 // ensure it implements sd.HandlerType.
 //
-// ！！！
+// ！！！TODO 重要 追代码
 // sd *ServiceDesc 在 由proto文件生成的go文件中定义
 // 类型为 grpc.ServiceDesc{} 该类型结构体在本文件中
 //
@@ -727,8 +727,12 @@ type ServiceInfo struct {
 
 // GetServiceInfo returns a map from service names to ServiceInfo.
 // Service names include the package names, in the form of <package>.<service>.
+//
+// GetServiceInfo返回一个从服务名称到ServiceInfo的映射
+// 服务名称包括包名的形式 <包>.<服务>
 func (s *Server) GetServiceInfo() map[string]ServiceInfo {
 	ret := make(map[string]ServiceInfo)
+
 	for n, srv := range s.services {
 		methods := make([]MethodInfo, 0, len(srv.methods)+len(srv.streams))
 		for m := range srv.methods {
@@ -738,6 +742,7 @@ func (s *Server) GetServiceInfo() map[string]ServiceInfo {
 				IsServerStream: false,
 			})
 		}
+
 		for m, d := range srv.streams {
 			methods = append(methods, MethodInfo{
 				Name:           m,
@@ -807,6 +812,8 @@ func (s *Server) Serve(lis net.Listener) error {
 	}
 
 	// sync.WaitGroup
+	//
+	// s.serveWG.Wait() 在 GracefulStop() 方法中
 	s.serveWG.Add(1)
 	defer func() {
 		s.serveWG.Done()
@@ -891,6 +898,8 @@ func (s *Server) Serve(lis net.Listener) error {
 		// 对每一个达到的请求启动一个新的协程
 		go func() {
 			s.handleRawConn(lis.Addr().String(), rawConn) // 核心
+
+			// 当前连接执行完毕之后 执行 WaitGroup 的 Done() 方法
 			s.serveWG.Done()
 		}()
 	}
@@ -1853,7 +1862,7 @@ func (s *Server) Stop() {
 // grpc 优雅退出
 // 先关闭 监听套接字，再关闭连接套接字
 func (s *Server) GracefulStop() {
-	// 退出标识操作
+	// 执行 退出标识 操作
 	s.quit.Fire()
 	defer s.done.Fire()
 
