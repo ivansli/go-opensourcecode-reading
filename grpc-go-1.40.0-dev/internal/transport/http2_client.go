@@ -472,7 +472,7 @@ func newHTTP2Client(connectCtx, ctx context.Context, addr resolver.Address, opts
 	// 每个传输都有一个专用的goroutine，它从网络上读取HTTP2帧
 	// 然后它将帧分派给相应的流实体
 	//
-	// todo 追源码
+	// todo （read code）
 	// 作为一个单独的goroutine运行，负责从网络连接读取数据
 	go t.reader()
 
@@ -560,6 +560,7 @@ func newHTTP2Client(connectCtx, ctx context.Context, addr resolver.Address, opts
 		t.controlBuf.finish()
 		close(t.writerDone)
 	}()
+
 	return t, nil
 }
 
@@ -1446,15 +1447,18 @@ func (t *http2Client) handlePing(f *http2.PingFrame) {
 
 func (t *http2Client) handleGoAway(f *http2.GoAwayFrame) {
 	t.mu.Lock()
+
 	if t.state == closing {
 		t.mu.Unlock()
 		return
 	}
+
 	if f.ErrCode == http2.ErrCodeEnhanceYourCalm {
 		if logger.V(logLevel) {
 			logger.Infof("Client received GoAway with http2.ErrCodeEnhanceYourCalm.")
 		}
 	}
+
 	id := f.LastStreamID
 	if id > 0 && id%2 == 0 {
 		t.mu.Unlock()
@@ -1487,6 +1491,8 @@ func (t *http2Client) handleGoAway(f *http2.GoAwayFrame) {
 		// draining, to allow the client to stop attempting to create streams
 		// before disallowing new streams on this connection.
 		t.onGoAway(t.goAwayReason)
+
+		// 连接 t 的状态 修改为 draining
 		t.state = draining
 	}
 	// All streams with IDs greater than the GoAwayId
@@ -1929,7 +1935,7 @@ func (t *http2Client) keepalive() {
 					atomic.AddInt64(&t.czData.kpCount, 1)
 				}
 
-				// TODO 阅读。。。
+				// TODO（read code）
 				// ping
 				t.controlBuf.put(p)
 				timeoutLeft = t.kp.Timeout

@@ -401,6 +401,8 @@ var ErrBadResolverState = errors.New("bad resolver state")
 // and returns one aggregated connectivity state.
 //
 // It's not thread safe.
+//
+// ConnectivityStateEvaluator 接受多个 subcons 的连接状态，并返回一个聚合的连接状态。
 type ConnectivityStateEvaluator struct {
 	numReady      uint64 // Number of addrConns in ready state.
 	numConnecting uint64 // Number of addrConns in connecting state.
@@ -414,24 +416,34 @@ type ConnectivityStateEvaluator struct {
 //  - Else the aggregated state is TransientFailure.
 //
 // Idle and Shutdown are not considered.
+
+// 根据 当前负载均衡器的 就绪数 连接数，来判断其应该所处的状态
 func (cse *ConnectivityStateEvaluator) RecordTransition(oldState, newState connectivity.State) connectivity.State {
 	// Update counters.
 	for idx, state := range []connectivity.State{oldState, newState} {
 		updateVal := 2*uint64(idx) - 1 // -1 for oldState and +1 for new.
+
 		switch state {
-		case connectivity.Ready:
+		case connectivity.Ready: // 就绪
 			cse.numReady += updateVal
-		case connectivity.Connecting:
+		case connectivity.Connecting: // 连接中
 			cse.numConnecting += updateVal
 		}
 	}
 
 	// Evaluate.
+	// 对状态进行评估
+
+	// 连接数 大于 0，表示就绪
 	if cse.numReady > 0 {
 		return connectivity.Ready
 	}
+
+	// 连接数 等于 0，但是 连接中 数目大于0，则是 连接中状态
 	if cse.numConnecting > 0 {
 		return connectivity.Connecting
 	}
+
+	// 否则是连接失败
 	return connectivity.TransientFailure
 }

@@ -158,6 +158,7 @@ func (s *Server) Endpoint() (*url.URL, error) {
 		s.lis = lis
 		s.endpoint = &url.URL{Scheme: "grpc", Host: addr}
 	})
+
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -173,6 +174,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.ctx = ctx
 	s.log.Infof("[gRPC] server listening on: %s", s.lis.Addr().String())
+
 	// 继续健康检查
 	s.health.Resume()
 

@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -34,7 +35,7 @@ import (
 )
 
 const (
-	addr = "localhost:50051"
+	addr = "localhost"
 
 	EtcdScheme      = "etcd"
 	EtcdServiceName = "helloworld"
@@ -46,16 +47,25 @@ type ecServer struct {
 }
 
 func (s *ecServer) UnaryEcho(ctx context.Context, req *pb.EchoRequest) (*pb.EchoResponse, error) {
+	fmt.Println("client request:", req.String())
 	return &pb.EchoResponse{Message: fmt.Sprintf("%s (from %s)", req.Message, s.addr)}, nil
 }
 
 func main() {
-	lis, err := net.Listen("tcp", addr)
+	// 服务端端口, 可以在执行时自定义端口
+	// go run main.go -port=5002
+	port := flag.String("port", "5001", "server port")
+	flag.Parse()
+
+	// 服务端地址
+	address := addr + ":" + (*port)
+
+	lis, err := net.Listen("tcp", address)
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
 	s := grpc.NewServer()
-	pb.RegisterEchoServer(s, &ecServer{addr: addr})
+	pb.RegisterEchoServer(s, &ecServer{addr: address})
 
 	ctx := context.Background()
 
@@ -67,9 +77,9 @@ func main() {
 		panic(err)
 	}
 	// 服务注册
-	go Register(ctx, cli, EtcdServiceName, addr)
+	go Register(ctx, cli, EtcdServiceName, address)
 
-	log.Printf("serving on %s\n", addr)
+	log.Printf("serving on %s\n", address)
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
@@ -102,6 +112,7 @@ func Register(ctx context.Context, client *clientv3.Client, service, self string
 		case <-ctx.Done(): // 上下文 取消或超时
 			return nil
 		case <-respCh:
+			//fmt.Printf("d := <-respCh\n")
 		}
 	}
 }

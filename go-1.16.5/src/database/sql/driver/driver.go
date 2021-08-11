@@ -4,6 +4,7 @@
 
 // Package driver defines interfaces to be implemented by database
 // drivers as used by package sql.
+// driver 包 定义了需要被数据库驱动实现的接口
 //
 // Most code should use package sql.
 //
@@ -77,6 +78,7 @@ type NamedValue struct {
 
 // Driver is the interface that must be implemented by a database
 // driver.
+// Driver 是必须被数据库驱动实现的接口
 //
 // Database drivers may implement DriverContext for access
 // to contexts and to parse the name only once for a pool of connections,
@@ -222,10 +224,12 @@ type QueryerContext interface {
 
 // Conn is a connection to a database. It is not used concurrently
 // by multiple goroutines.
+// Conn 代表一个数据库连接。不能被用于多个 协程 的并发操作
 //
 // Conn is assumed to be stateful.
 type Conn interface {
 	// Prepare returns a prepared statement, bound to this connection.
+	// Prepare 返回一个绑定到此连接的预处理语句
 	Prepare(query string) (Stmt, error)
 
 	// Close invalidates and potentially stops any current

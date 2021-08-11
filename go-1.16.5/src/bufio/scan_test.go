@@ -109,6 +109,7 @@ func TestScanWords(t *testing.T) {
 		buf := strings.NewReader(test)
 		s := NewScanner(buf)
 		s.Split(ScanWords)
+
 		words := strings.Fields(test)
 		var wordCount int
 		for wordCount = 0; wordCount < len(words); wordCount++ {
@@ -120,6 +121,7 @@ func TestScanWords(t *testing.T) {
 				t.Errorf("#%d: %d: expected %q got %q", n, wordCount, words[wordCount], got)
 			}
 		}
+
 		if s.Scan() {
 			t.Errorf("#%d: scan ran too long, got %q", n, s.Text())
 		}
@@ -178,6 +180,7 @@ func TestScanLongLines(t *testing.T) {
 	buf := new(bytes.Buffer)
 	lineNum := 0
 	j := 0
+
 	for i := 0; i < 2*smallMaxTokenSize; i++ {
 		genLine(tmp, lineNum, j, true)
 		if j < smallMaxTokenSize {
@@ -188,8 +191,10 @@ func TestScanLongLines(t *testing.T) {
 		buf.Write(tmp.Bytes())
 		lineNum++
 	}
+
 	s := NewScanner(&slowReader{1, buf})
 	s.Split(ScanLines)
+
 	s.MaxTokenSize(smallMaxTokenSize)
 	j = 0
 	for lineNum := 0; s.Scan(); lineNum++ {
@@ -204,6 +209,7 @@ func TestScanLongLines(t *testing.T) {
 			t.Errorf("%d: bad line: %d %d\n%.100q\n%.100q\n", lineNum, len(s.Bytes()), len(line), s.Text(), line)
 		}
 	}
+
 	err := s.Err()
 	if err != nil {
 		t.Fatal(err)
@@ -251,12 +257,14 @@ func testNoNewline(text string, lines []string, t *testing.T) {
 	buf := strings.NewReader(text)
 	s := NewScanner(&slowReader{7, buf})
 	s.Split(ScanLines)
+
 	for lineNum := 0; s.Scan(); lineNum++ {
 		line := lines[lineNum]
 		if s.Text() != line {
 			t.Errorf("%d: bad line: %d %d\n%.100q\n%.100q\n", lineNum, len(s.Bytes()), len(line), s.Bytes(), line)
 		}
 	}
+
 	err := s.Err()
 	if err != nil {
 		t.Fatal(err)
@@ -392,9 +400,11 @@ func (endlessZeros) Read(p []byte) (int, error) {
 
 func TestBadReader(t *testing.T) {
 	scanner := NewScanner(endlessZeros{})
+
 	for scanner.Scan() {
 		t.Fatal("read should fail")
 	}
+
 	err := scanner.Err()
 	if err != io.ErrNoProgress {
 		t.Errorf("unexpected error: %v", err)
@@ -487,11 +497,13 @@ func TestDontLoopForever(t *testing.T) {
 
 func TestBlankLines(t *testing.T) {
 	s := NewScanner(strings.NewReader(strings.Repeat("\n", 1000)))
+
 	for count := 0; s.Scan(); count++ {
 		if count > 2000 {
 			t.Fatal("looping")
 		}
 	}
+
 	if s.Err() != nil {
 		t.Fatal("after scan:", s.Err())
 	}
@@ -512,8 +524,10 @@ func TestEmptyLinesOK(t *testing.T) {
 	c := countdown(10000)
 	s := NewScanner(strings.NewReader(strings.Repeat("\n", 10000)))
 	s.Split(c.split)
+
 	for s.Scan() {
 	}
+
 	if s.Err() != nil {
 		t.Fatal("after scan:", s.Err())
 	}

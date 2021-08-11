@@ -36,17 +36,22 @@ import (
 // pickerWrapper是balancer.Picker的包装器
 // 它在特定的选择操作上阻塞，当有选择器更新时解除阻塞。
 type pickerWrapper struct {
-	mu         sync.Mutex
-	done       bool
+	mu   sync.Mutex
+	done bool
+
 	blockingCh chan struct{}
+
+	// 负载均衡器的 选择器
 	picker     balancer.Picker
 }
 
+// 获取 负载均衡器的 选择器的包装对象
 func newPickerWrapper() *pickerWrapper {
 	return &pickerWrapper{blockingCh: make(chan struct{})}
 }
 
 // updatePicker is called by UpdateBalancerState. It unblocks all blocked pick.
+// 更新 负载均衡器的 选择器
 func (pw *pickerWrapper) updatePicker(p balancer.Picker) {
 	pw.mu.Lock()
 	if pw.done {
@@ -57,6 +62,7 @@ func (pw *pickerWrapper) updatePicker(p balancer.Picker) {
 	pw.picker = p
 	// pw.blockingCh should never be nil.
 	close(pw.blockingCh)
+
 	pw.blockingCh = make(chan struct{})
 	pw.mu.Unlock()
 }
@@ -101,6 +107,7 @@ func (pw *pickerWrapper) pick(ctx context.Context, failfast bool, info balancer.
 		if pw.picker == nil {
 			ch = pw.blockingCh
 		}
+
 		if ch == pw.blockingCh {
 			// This could happen when either:
 			// - pw.picker is nil (the previous if condition), or
@@ -114,6 +121,7 @@ func (pw *pickerWrapper) pick(ctx context.Context, failfast bool, info balancer.
 				} else {
 					errStr = ctx.Err().Error()
 				}
+
 				switch ctx.Err() {
 				case context.DeadlineExceeded:
 					return nil, nil, status.Error(codes.DeadlineExceeded, errStr)
@@ -122,6 +130,7 @@ func (pw *pickerWrapper) pick(ctx context.Context, failfast bool, info balancer.
 				}
 			case <-ch:
 			}
+
 			continue
 		}
 
@@ -170,12 +179,14 @@ func (pw *pickerWrapper) pick(ctx context.Context, failfast bool, info balancer.
 		}
 
 		// 连接已经准备就绪
+		// acw.getAddrConn() 等于 addrconn
 		if t := acw.getAddrConn().getReadyTransport(); t != nil {
 			if channelz.IsOn() {
 				return t, doneChannelzWrapper(acw, pickResult.Done), nil
 			}
 
-			// t 就是准备好的连接， pickResult.Done 是 func(DoneInfo)
+			// t 就是准备好的连接
+			// pickResult.Done 是 func(DoneInfo)
 			return t, pickResult.Done, nil
 		}
 

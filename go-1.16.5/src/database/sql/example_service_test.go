@@ -23,6 +23,7 @@ func Example_openDBService() {
 		// another initialization error.
 		log.Fatal(err)
 	}
+
 	db.SetConnMaxLifetime(0)
 	db.SetMaxIdleConns(50)
 	db.SetMaxOpenConns(50)
@@ -56,11 +57,13 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/quick-action":
 		// This is a short SELECT. Use the request context as the base of
 		// the context timeout.
+		// 设置超时时间
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
 
 		id := 5
 		org := 10
+
 		var name string
 		err := db.QueryRowContext(ctx, `
 select
@@ -72,17 +75,20 @@ where
 	p.id = :id
 	and o.id = :org
 ;`,
-			sql.Named("id", id),
-			sql.Named("org", org),
-		).Scan(&name)
+			sql.Named("id", id),   // SQL 语句参数
+			sql.Named("org", org), // SQL 语句参数
+		).Scan(&name)  // 提取结果
+
+		// 校验执行结果中是否有错误
 		if err != nil {
-			if err == sql.ErrNoRows {
+			if err == sql.ErrNoRows {  // 数据不存在
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+
 		io.WriteString(w, name)
 		return
 	case "/long-action":
@@ -93,24 +99,34 @@ where
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 		defer cancel()
 
-		var names []string
+
 		rows, err := db.QueryContext(ctx, "select p.name from people as p where p.active = true;")
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
+		// 结果集
+		var names []string
+
+		// 是否还存在下一条数据
 		for rows.Next() {
 			var name string
+
+			// 提取字段
 			err = rows.Scan(&name)
 			if err != nil {
 				break
 			}
+
 			names = append(names, name)
 		}
+
 		// Check for errors during rows "Close".
 		// This may be more important if multiple statements are executed
 		// in a single batch and rows were written as well as read.
+		// 检查行“关闭”期间是否有错误
+		// 如果在单个批处理中执行多个语句，并且写入和读取行，那么这一点可能更重要
 		if closeErr := rows.Close(); closeErr != nil {
 			http.Error(w, closeErr.Error(), http.StatusInternalServerError)
 			return
@@ -139,6 +155,7 @@ where
 		defer cancel()
 
 		var orderRef = "ABC123"
+
 		tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 		_, err = tx.ExecContext(ctx, "stored_proc_name", orderRef)
 

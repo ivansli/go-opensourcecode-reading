@@ -185,10 +185,9 @@ func newClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, meth
 	// waitForResolvedAddrs 会阻塞，直到解析器提供了地址或者上下文过期
 	// 返回nil，除非上下文先过期;否则根据上下文返回一个状态错误
 	//
-	// 由于在Dial时可能是非阻塞异步的建立conn
-	// 所以，这里要确保conn已经建立完毕，很重要
 
-	// cc grpc.ClientConn 等待连接就绪
+	// 由于 grpc.ClientConn 允许异步 建立连接
+	// 所以在 invoke 调用时需要先判断 地址解析之后的连接是否简建立完成
 	if err := cc.waitForResolvedAddrs(ctx); err != nil {
 		return nil, err
 	}
@@ -291,7 +290,7 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 	// TODO（追源码逻辑）
 	// 执行 callOptions
 	for _, o := range opts {
-		// ！！！before
+		// callOptions 接口方法 before
 		if err := o.before(c); err != nil {
 			return nil, toRPCErr(err)
 		}
@@ -350,9 +349,11 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 				client: true,
 			},
 		}
+
 		if deadline, ok := ctx.Deadline(); ok {
 			trInfo.firstLine.deadline = time.Until(deadline)
 		}
+
 		trInfo.tr.LazyLog(&trInfo.firstLine, false)
 		ctx = trace.NewContext(ctx, trInfo.tr)
 	}

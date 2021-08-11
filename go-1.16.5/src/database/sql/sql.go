@@ -32,15 +32,27 @@ import (
 
 var (
 	driversMu sync.RWMutex
-	drivers   = make(map[string]driver.Driver)
+
+	// ！！！
+	// 全局的驱动集合
+	drivers = make(map[string]driver.Driver)
 )
 
 // nowFunc returns the current time; it's overridden in tests.
+// 返回当前的时间
 var nowFunc = time.Now
 
 // Register makes a database driver available by the provided name.
 // If Register is called twice with the same name or if driver is nil,
 // it panics.
+//
+// Register 通过提供名称来注册数据库驱动
+// 如果 驱动为空 或者 同一个名称注册多次 会发生 panic
+//
+// driver.Driver 是接口，也就是说 数据库驱动需要实现 下面方法
+// type Driver interface {
+//    Open(name string) (Conn, error)
+// }
 func Register(name string, driver driver.Driver) {
 	driversMu.Lock()
 	defer driversMu.Unlock()
@@ -53,21 +65,26 @@ func Register(name string, driver driver.Driver) {
 	drivers[name] = driver
 }
 
+// 注销掉全部驱动
 func unregisterAllDrivers() {
 	driversMu.Lock()
 	defer driversMu.Unlock()
+
 	// For tests.
 	drivers = make(map[string]driver.Driver)
 }
 
 // Drivers returns a sorted list of the names of the registered drivers.
+// 返回所有驱动名称列表，结果是经过排序的
 func Drivers() []string {
 	driversMu.RLock()
 	defer driversMu.RUnlock()
+
 	list := make([]string, 0, len(drivers))
 	for name := range drivers {
 		list = append(list, name)
 	}
+
 	sort.Strings(list)
 	return list
 }
@@ -116,6 +133,7 @@ func Named(name string, value interface{}) NamedArg {
 }
 
 // IsolationLevel is the transaction isolation level used in TxOptions.
+// IsolationLevel 代表 在 TxOptions 中的 隔离级别
 type IsolationLevel int
 
 // Various isolation levels that drivers may support in BeginTx.
@@ -175,6 +193,7 @@ type RawBytes []byte
 // NullString represents a string that may be null.
 // NullString implements the Scanner interface so
 // it can be used as a scan destination:
+// NullString 代表一个可能为空的字符串， 它实现了 Scanner 接口
 //
 //  var s NullString
 //  err := db.QueryRow("SELECT name FROM foo WHERE id=?", id).Scan(&s)
@@ -209,24 +228,30 @@ func (ns NullString) Value() (driver.Value, error) {
 }
 
 // NullInt64 represents an int64 that may be null.
+// 代表一个 int64数值，但是它可能是null
+//
 // NullInt64 implements the Scanner interface so
 // it can be used as a scan destination, similar to NullString.
 type NullInt64 struct {
 	Int64 int64
-	Valid bool // Valid is true if Int64 is not NULL
+	Valid bool // Valid is true if Int64 is not NULL 为true代表非null
 }
 
 // Scan implements the Scanner interface.
+// 实现 Scanner 接口
+// 把 value 的值 填充到 n 中，并保存校验结果
 func (n *NullInt64) Scan(value interface{}) error {
 	if value == nil {
 		n.Int64, n.Valid = 0, false
 		return nil
 	}
+
 	n.Valid = true
 	return convertAssign(&n.Int64, value)
 }
 
 // Value implements the driver Valuer interface.
+// 实现 driver.Valuer 接口
 func (n NullInt64) Value() (driver.Value, error) {
 	if !n.Valid {
 		return nil, nil
@@ -2770,6 +2795,8 @@ func (s *Stmt) finalClose() error {
 
 // Rows is the result of a query. Its cursor starts before the first row
 // of the result set. Use Next to advance from row to row.
+//
+// Rows是查询的结果。它的游标开始于结果集的第一行之前。使用Next从一行移动到另一行。
 type Rows struct {
 	dc          *driverConn // owned; must call releaseConn when closed to release
 	releaseConn func(error)
@@ -2838,16 +2865,20 @@ func (rs *Rows) awaitDone(ctx, txctx context.Context) {
 //
 // Every call to Scan, even the first one, must be preceded by a call to Next.
 func (rs *Rows) Next() bool {
+	// OK 标识是否还有下一条数据，OK标识还有
 	var doClose, ok bool
+
 	withLock(rs.closemu.RLocker(), func() {
 		doClose, ok = rs.nextLocked()
 	})
+
 	if doClose {
 		rs.Close()
 	}
 	return ok
 }
 
+// OK 代表是否还有下一条数据
 func (rs *Rows) nextLocked() (doClose, ok bool) {
 	if rs.closed {
 		return false, false
@@ -2880,6 +2911,7 @@ func (rs *Rows) nextLocked() (doClose, ok bool) {
 		}
 		return doClose, false
 	}
+
 	return false, true
 }
 
@@ -3140,6 +3172,8 @@ func (rs *Rows) Scan(dest ...interface{}) error {
 	if len(dest) != len(rs.lastcols) {
 		return fmt.Errorf("sql: expected %d destination arguments in Scan, not %d", len(rs.lastcols), len(dest))
 	}
+
+	// 把查询结果的一条数据 中 每个字段 逐个赋值给 dest
 	for i, sv := range rs.lastcols {
 		err := convertAssignRows(dest[i], sv, rs)
 		if err != nil {
@@ -3161,13 +3195,19 @@ func (rs *Rows) Close() error {
 	return rs.close(nil)
 }
 
+// 可以多次调用
+// 因为 有锁保护
 func (rs *Rows) close(err error) error {
+	// 先 加锁
 	rs.closemu.Lock()
 	defer rs.closemu.Unlock()
 
+	// 如果已经被关闭，则直接返回
 	if rs.closed {
 		return nil
 	}
+
+	// 设置关闭标识 为 true
 	rs.closed = true
 
 	if rs.lasterr == nil {
@@ -3192,9 +3232,11 @@ func (rs *Rows) close(err error) error {
 }
 
 // Row is the result of calling QueryRow to select a single row.
+// Row 代表 调用 QueryRow 取获取一条数据的结果
 type Row struct {
 	// One of these two will be non-nil:
-	err  error // deferred error for easy chaining
+	err  error // deferred error for easy chaining 延迟错误，便于链接
+
 	rows *Rows
 }
 
@@ -3203,6 +3245,7 @@ type Row struct {
 // If more than one row matches the query,
 // Scan uses the first row and discards the rest. If no row matches
 // the query, Scan returns ErrNoRows.
+// Scan 使用第一行，丢弃其余行。如果没有匹配查询的行，Scan返回 ErrNoRows
 func (r *Row) Scan(dest ...interface{}) error {
 	if r.err != nil {
 		return r.err
@@ -3222,23 +3265,29 @@ func (r *Row) Scan(dest ...interface{}) error {
 	// they were obtained from the network anyway) But for now we
 	// don't care.
 	defer r.rows.Close()
+
 	for _, dp := range dest {
 		if _, ok := dp.(*RawBytes); ok {
 			return errors.New("sql: RawBytes isn't allowed on Row.Scan")
 		}
 	}
 
+	// 只 获取 第一行数据
 	if !r.rows.Next() {
 		if err := r.rows.Err(); err != nil {
 			return err
 		}
 		return ErrNoRows
 	}
+
+	// 解析第一行数据
 	err := r.rows.Scan(dest...)
 	if err != nil {
 		return err
 	}
+
 	// Make sure the query can be processed to completion with no errors.
+	// 确保查询可以在没有错误的情况下完成。
 	return r.rows.Close()
 }
 

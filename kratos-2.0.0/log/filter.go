@@ -62,9 +62,11 @@ func (f *Filter) Log(level Level, keyvals ...interface{}) error {
 	if level < f.level {
 		return nil
 	}
+
 	if f.filter != nil && f.filter(level, keyvals...) {
 		return nil
 	}
+
 	if len(f.key) > 0 || len(f.value) > 0 {
 		for i := 0; i < len(keyvals); i += 2 {
 			v := i + 1
@@ -79,5 +81,6 @@ func (f *Filter) Log(level Level, keyvals ...interface{}) error {
 			}
 		}
 	}
+
 	return f.logger.Log(level, keyvals...)
 }

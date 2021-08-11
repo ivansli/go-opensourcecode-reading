@@ -262,7 +262,8 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	//    features/debugging/client/main.go
 	//    features/retry/client/main.go
 	if cc.dopts.defaultServiceConfigRawJSON != nil {
-		// 解析json字符串
+		// TODO （read code）
+		//  解析json字符串
 		scpr := parseServiceConfig(*cc.dopts.defaultServiceConfigRawJSON)
 		if scpr.Err != nil {
 			return nil, fmt.Errorf("%s: %v", invalidDefaultServiceConfigErrPrefix, scpr.Err)
@@ -438,6 +439,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		cc.authority = cc.parsedTarget.Endpoint
 	}
 
+	// 注意：scChan 不为空 并且 serveconfig 没配置，则会阻塞，直到 接收到数据
 	// 阻塞等待 scChan
 	//
 	// 如果 scChan 存在，上面 scChan 由于某些原因没有接收到 serviceconf 数据
@@ -458,7 +460,8 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 
 	// scChan 存在，则启动新的协程监听其变化
 	if cc.dopts.scChan != nil {
-		// 启动新的协程来监听 sc 变化
+		// TODO 注意：新的 goroutine
+		//  启动新的协程来监听 sc 变化
 		go cc.scWatcher()
 	}
 
@@ -832,6 +835,7 @@ func (cc *ClientConn) scWatcher() {
 			// 我们将来可能会重新考虑这个决定
 			cc.sc = &sc
 			cc.safeConfigSelector.UpdateConfigSelector(&defaultConfigSelector{&sc})
+
 			cc.mu.Unlock()
 		case <-cc.ctx.Done():
 			return
@@ -902,8 +906,12 @@ func (cc *ClientConn) maybeApplyDefaultServiceConfig(addrs []resolver.Address) {
 //
 //  第二个参数 err ：因为会在不同的地方多次调用，所以传入其他地方的操作结果是否有错误发生
 func (cc *ClientConn) updateResolverState(s resolver.State, err error) error {
-	// 标识一下 触发 第一次 解析事件
-	// 此标记信息 在 grpc.ClientConn 对象中
+	// 此标记信息 在 grpc.ClientConn 对象 firstResolveEvent 中
+	// 标识 第一次名称解析已经就绪，主要是在 invoke 调用时，需要等待地址连接就绪
+
+	// 重要！
+	// 由于 此方法可能 不跟 Dial() 方法在同一个协程里面，所以需要 defer 延迟执行 Fire()
+	// 这样，Dial() 方法所在协程能通过 firstResolveEvent 来检测到名称解析逻辑是否就绪
 	defer cc.firstResolveEvent.Fire()
 
 	// ！！！加锁
@@ -972,6 +980,7 @@ func (cc *ClientConn) updateResolverState(s resolver.State, err error) error {
 			cc.applyServiceConfigAndBalancer(sc, configSelector, s.Addresses)
 		} else {
 			ret = balancer.ErrBadResolverState
+
 			if cc.balancerWrapper == nil {
 				var err error
 				if s.ServiceConfig.Err != nil {
@@ -981,9 +990,12 @@ func (cc *ClientConn) updateResolverState(s resolver.State, err error) error {
 				}
 
 				cc.safeConfigSelector.UpdateConfigSelector(&defaultConfigSelector{cc.sc})
+
+				// 更新负载均衡器的选择器
 				cc.blockingpicker.updatePicker(base.NewErrPicker(err))
 				cc.csMgr.updateState(connectivity.TransientFailure)
 				cc.mu.Unlock()
+
 				return ret
 			}
 		}
@@ -1009,7 +1021,9 @@ func (cc *ClientConn) updateResolverState(s resolver.State, err error) error {
 			// 过滤掉  s.Addresses[i]
 			// TODO ！！！ 切片的裁剪方法值得学习
 			if s.Addresses[i].Type == resolver.GRPCLB {
+				// 删减第 i 个元素
 				copy(s.Addresses[i:], s.Addresses[i+1:])
+				//裁剪 slice，长度-1
 				s.Addresses = s.Addresses[:len(s.Addresses)-1]
 				continue
 			}
@@ -1091,6 +1105,7 @@ func (cc *ClientConn) handleSubConnStateChange(sc balancer.SubConn, s connectivi
 	// TODO(bar switching) send updates to all balancer wrappers when balancer
 	// gracefully switching is supported.
 	cc.balancerWrapper.handleSubConnStateChange(sc, s, err)
+
 	cc.mu.Unlock()
 }
 
@@ -1150,9 +1165,12 @@ func (cc *ClientConn) removeAddrConn(ac *addrConn, err error) {
 		return
 	}
 
+	// 删除 cc.conns 字段 map 中的 ac
 	delete(cc.conns, ac)
 
 	cc.mu.Unlock()
+
+	// 销毁 ac
 	ac.tearDown(err)
 }
 
@@ -1202,6 +1220,7 @@ func (ac *addrConn) connect() error {
 		ac.mu.Unlock()
 		return errConnClosing
 	}
+
 	if ac.state != connectivity.Idle {
 		ac.mu.Unlock()
 		return nil
@@ -1209,8 +1228,9 @@ func (ac *addrConn) connect() error {
 
 	// Update connectivity state within the lock to prevent subsequent or
 	// concurrent calls from resetting the transport more than once.
-	//
-	// 更新连接状态为 连接中 connectivity.Connecting
+
+	// TODO
+	//  更新连接状态为 连接中 connectivity.Connecting
 	ac.updateConnectivityState(connectivity.Connecting, nil)
 	ac.mu.Unlock()
 
@@ -1234,9 +1254,12 @@ func (ac *addrConn) connect() error {
 }
 
 // tryUpdateAddrs tries to update ac.addrs with the new addresses list.
+// 试图使用 新的 地址列表更新 ac.addrs
 //
 // If ac is Connecting, it returns false. The caller should tear down the ac and
 // create a new one. Note that the backoff will be reset when this happens.
+// 如果 ac 是连接状态，则返回 false
+// 调用者 caller应该销毁 ac，并创建一个新的 ac
 //
 // If ac is TransientFailure, it updates ac.addrs and returns true. The updated
 // addresses will be picked up by retry in the next iteration after backoff.
@@ -1245,6 +1268,8 @@ func (ac *addrConn) connect() error {
 //
 // If ac is Ready, it checks whether current connected address of ac is in the
 // new addrs list.
+// 如果 ac 是就绪状态，则检查 当前连接地址是否在 新的 addr 地址列表中
+//
 //  - If true, it updates ac.addrs and returns true. The ac will keep using
 //    the existing connection.
 //  - If false, it does nothing and returns false.
@@ -1253,6 +1278,7 @@ func (ac *addrConn) tryUpdateAddrs(addrs []resolver.Address) bool {
 	defer ac.mu.Unlock()
 
 	channelz.Infof(logger, ac.channelzID, "addrConn: tryUpdateAddrs curAddr: %v, addrs: %v", ac.curAddr, addrs)
+
 	if ac.state == connectivity.Shutdown ||
 		ac.state == connectivity.TransientFailure ||
 		ac.state == connectivity.Idle {
@@ -1260,14 +1286,17 @@ func (ac *addrConn) tryUpdateAddrs(addrs []resolver.Address) bool {
 		return true
 	}
 
+	// 如果 ac 是连接中，则直接返回
 	if ac.state == connectivity.Connecting {
 		return false
 	}
 
 	// ac.state is Ready, try to find the connected address.
+	// ac 连接状态是 就绪，则从 address 找出建立连接时用的 那个地址
 	var curAddrFound bool
 	for _, a := range addrs {
-		// ！！！ 比较
+		// ac.curAddr 是 addrconn 当前建立连接 对应的一个地址
+		// 找到对应地址
 		if reflect.DeepEqual(ac.curAddr, a) {
 			curAddrFound = true
 			break
@@ -1276,10 +1305,13 @@ func (ac *addrConn) tryUpdateAddrs(addrs []resolver.Address) bool {
 
 	channelz.Infof(logger, ac.channelzID, "addrConn: tryUpdateAddrs curAddrFound: %v", curAddrFound)
 
+	// 找到，则更新对应的 ac.addrs
+	// ac.addrs 是一个地址切片，其中包含已经建立连接的地址
 	if curAddrFound {
 		ac.addrs = addrs
 	}
 
+	// 返回 是否 找到建立连接地址
 	return curAddrFound
 }
 
@@ -1376,6 +1408,7 @@ func (cc *ClientConn) applyServiceConfigAndBalancer(sc *ServiceConfig, configSel
 	// 如果 存在，则不会再走下面逻辑
 
 	// 负载均衡器的构造器 为空
+	// 通过 grpc.WithBalancerName("round_robin") 设置 cc.dopts.balancerBuilder
 	if cc.dopts.balancerBuilder == nil {
 		// Only look at balancer types and switch balancer if balancer dial
 		// option is not set.
@@ -1696,7 +1729,10 @@ func (ac *addrConn) resetTransport() {
 
 		hctx, hcancel := context.WithCancel(ac.ctx)
 
-		// ！！！启动新的 goroutine 进行健康检查
+		// TODO (read code)
+		//  ！！！启动新的 goroutine 进行健康检查
+		//  很重要，会在该方法中 更新状态为 就绪
+		//  ac.updateConnectivityState(connectivity.Ready, nil)
 		ac.startHealthCheck(hctx)
 		ac.mu.Unlock()
 
@@ -1705,9 +1741,12 @@ func (ac *addrConn) resetTransport() {
 
 		// ！！！！
 		// 阻塞，直到创建的传输停止。当这种情况发生时，我们从addr列表的顶部重新启动
-		//
+
 		// 上面连接建立成功，则会一直阻塞在这里
-		// 直到创建的传输停止，那么会再次进入循环逻辑，非异常不会退出此方法
+		// 直到创建的传输停止 (停止、关闭 会触发 close 在 reconnect.Done() 的 chan)
+		// 并且此时 ac.state == connectivity.Shutdown，则此时会退出该循环
+
+		// 否则会再次进入循环逻辑，非异常不会退出此方法
 		// func (e *Event) Done() <-chan struct{}
 		<-reconnect.Done()
 
@@ -1810,6 +1849,9 @@ func (ac *addrConn) createTransport(addr resolver.Address, copts transport.Conne
 			}
 		})
 		ac.mu.Unlock()
+
+		// ！！！重要！！！
+		// 当前连接退出时，会触发这里，通知使用该连接的位置
 		reconnect.Fire()
 	}
 
@@ -1828,6 +1870,9 @@ func (ac *addrConn) createTransport(addr resolver.Address, copts transport.Conne
 		})
 		ac.mu.Unlock()
 		close(onCloseCalled)
+
+		// ！！！重要！！！
+		// 当前连接关闭时，会触发这里，通知使用该连接的位置
 		reconnect.Fire()
 	}
 
@@ -1893,6 +1938,8 @@ func (ac *addrConn) startHealthCheck(ctx context.Context) {
 	var healthcheckManagingState bool
 	defer func() {
 		if !healthcheckManagingState {
+			// todo （read code）
+			// 连接 就绪！！！
 			ac.updateConnectivityState(connectivity.Ready, nil)
 		}
 	}()
@@ -1962,32 +2009,45 @@ func (ac *addrConn) resetConnectBackoff() {
 }
 
 // getReadyTransport returns the transport if ac's state is READY or nil if not.
+// 如果 ac 的 state 是 就绪状态，则 返回对应连接 transport
 func (ac *addrConn) getReadyTransport() transport.ClientTransport {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
+
 	if ac.state == connectivity.Ready {
 		return ac.transport
 	}
+
 	return nil
 }
 
 // tearDown starts to tear down the addrConn.
+// 销毁 addrconn 连接
 //
 // Note that tearDown doesn't remove ac from ac.cc.conns, so the addrConn struct
 // will leak. In most cases, call cc.removeAddrConn() instead.
+// tearDown 不会 从 ac.cc.conns 中移除 ac，那样的话会造成泄漏。
+// 在大多数情况下，直接调用 cc.removeAddrConn() 代替直接使用 tearDown
+// 因为  cc.removeAddrConn() 中会调用 tearDown
 func (ac *addrConn) tearDown(err error) {
 	ac.mu.Lock()
 	if ac.state == connectivity.Shutdown {
 		ac.mu.Unlock()
 		return
 	}
+
 	curTr := ac.transport
 	ac.transport = nil
+
 	// We have to set the state to Shutdown before anything else to prevent races
 	// between setting the state and logic that waits on context cancellation / etc.
+
+	// 设置 ac 的状态为关闭
 	ac.updateConnectivityState(connectivity.Shutdown, nil)
 	ac.cancel()
 	ac.curAddr = resolver.Address{}
+
+	// 关闭 底层建立的 http2 连接
 	if err == errConnDrain && curTr != nil {
 		// GracefulClose(...) may be executed multiple times when
 		// i) receiving multiple GoAway frames from the server; or
@@ -1998,6 +2058,7 @@ func (ac *addrConn) tearDown(err error) {
 		curTr.GracefulClose()
 		ac.mu.Lock()
 	}
+
 	if channelz.IsOn() {
 		channelz.AddTraceEvent(logger, ac.channelzID, 0, &channelz.TraceEventDesc{
 			Desc:     "Subchannel Deleted",
@@ -2011,6 +2072,7 @@ func (ac *addrConn) tearDown(err error) {
 		// the entity being deleted, and thus prevent it from being deleted right away.
 		channelz.RemoveEntry(ac.channelzID)
 	}
+
 	ac.mu.Unlock()
 }
 

@@ -24,22 +24,34 @@ func ExampleDB_QueryContext() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// 记得调用 close
 	defer rows.Close()
+
+	// 存储 多条结果集
 	names := make([]string, 0)
 
+	// 判断是否还有下一条数据
 	for rows.Next() {
 		var name string
+
+		// 提取 name 字段数据
 		if err := rows.Scan(&name); err != nil {
 			// Check for a scan error.
 			// Query rows will be closed with defer.
 			log.Fatal(err)
 		}
+
+		// 追加到 结果集 中
 		names = append(names, name)
 	}
+
 	// If the database is being written to ensure to check for Close
 	// errors that may be returned from the driver. The query may
 	// encounter an auto-commit error and be forced to rollback changes.
+	// 如果数据库正在写入，确保检查可能从驱动程序返回的Close错误。
+	// 查询可能会遇到自动提交错误，并被迫回滚更改。
 	rerr := rows.Close()
+
 	if rerr != nil {
 		log.Fatal(rerr)
 	}
@@ -48,16 +60,18 @@ func ExampleDB_QueryContext() {
 	if err := rows.Err(); err != nil {
 		log.Fatal(err)
 	}
+
 	fmt.Printf("%s are %d years old", strings.Join(names, ", "), age)
 }
 
 func ExampleDB_QueryRowContext() {
 	id := 123
 	var username string
-	var created time.Time
+	var created time.Time // 时间戳类型
+
 	err := db.QueryRowContext(ctx, "SELECT username, created_at FROM users WHERE id=?", id).Scan(&username, &created)
 	switch {
-	case err == sql.ErrNoRows:
+	case err == sql.ErrNoRows: // 没有数据
 		log.Printf("no user with id %d\n", id)
 	case err != nil:
 		log.Fatalf("query error: %v\n", err)
@@ -72,7 +86,10 @@ func ExampleDB_ExecContext() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// 影响行数
 	rows, err := result.RowsAffected()
+
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -115,19 +132,24 @@ from
 			id   int64
 			name string
 		)
+
 		if err := rows.Scan(&id, &name); err != nil {
 			log.Fatal(err)
 		}
+
 		log.Printf("id %d name is %s\n", id, name)
 	}
+
 	if !rows.NextResultSet() {
 		log.Fatalf("expected more result sets: %v", rows.Err())
 	}
+
 	var roleMap = map[int64]string{
 		1: "user",
 		2: "admin",
 		3: "gopher",
 	}
+
 	for rows.Next() {
 		var (
 			id   int64
@@ -138,6 +160,7 @@ from
 		}
 		log.Printf("id %d has role %s\n", id, roleMap[role])
 	}
+
 	if err := rows.Err(); err != nil {
 		log.Fatal(err)
 	}
@@ -163,6 +186,7 @@ func ExampleDB_PingContext() {
 	log.Println(status)
 }
 
+// 通过预处理 添加多条数据
 func ExampleDB_Prepare() {
 	projects := []struct {
 		mascot  string
@@ -198,39 +222,53 @@ func ExampleTx_Prepare() {
 		{"moby dock", 2013},
 	}
 
+	// 开启事务
 	tx, err := db.Begin()
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer tx.Rollback() // The rollback will be ignored if the tx has been committed later in the function.
+
+	// TODO (remember this)
+	//  The rollback will be ignored if the tx has been committed later in the function.
+	//  假如 事务已经提交，再次执行 rollback 回滚操作则会被忽略
+	defer tx.Rollback()
 
 	stmt, err := tx.Prepare("INSERT INTO projects(id, mascot, release, category) VALUES( ?, ?, ?, ? )")
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer stmt.Close() // Prepared statements take up server resources and should be closed after use.
+
+	// TODO (remember this)
+	//  Prepared statements take up server resources and should be closed after use.
+	//  Prepared 语句持有 服务端资源，应该在使用之后关闭
+	defer stmt.Close()
 
 	for id, project := range projects {
 		if _, err := stmt.Exec(id+1, project.mascot, project.release, "open source"); err != nil {
 			log.Fatal(err)
 		}
 	}
+
+	// 提交事务
 	if err := tx.Commit(); err != nil {
 		log.Fatal(err)
 	}
 }
 
 func ExampleDB_BeginTx() {
+	// 定义事务隔离级别 - 序列化
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	id := 37
 	_, execErr := tx.Exec(`UPDATE users SET status = ? WHERE id = ?`, "paid", id)
 	if execErr != nil {
 		_ = tx.Rollback()
 		log.Fatal(execErr)
 	}
+
 	if err := tx.Commit(); err != nil {
 		log.Fatal(err)
 	}
@@ -243,16 +281,23 @@ func ExampleConn_ExecContext() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer conn.Close() // Return the connection to the pool.
+
+	// TODO (remember this)
+	//  Return the connection to the pool.
+	//  归还连接到 pool
+	defer conn.Close()
+
 	id := 41
 	result, err := conn.ExecContext(ctx, `UPDATE balances SET balance = balance + 10 WHERE user_id = ?;`, id)
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	rows, err := result.RowsAffected()
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	if rows != 1 {
 		log.Fatalf("expected single row affected, got %d rows affected", rows)
 	}
@@ -263,6 +308,7 @@ func ExampleTx_ExecContext() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	id := 37
 	_, execErr := tx.ExecContext(ctx, "UPDATE users SET status = ? WHERE id = ?", "paid", id)
 	if execErr != nil {
@@ -303,6 +349,7 @@ func ExampleTx_Rollback() {
 
 func ExampleStmt() {
 	// In normal use, create one Stmt when your process starts.
+	// 在正常使用中，当你开始处理它的时候 创建一个 stmt
 	stmt, err := db.PrepareContext(ctx, "SELECT username FROM users WHERE id = ?")
 	if err != nil {
 		log.Fatal(err)
@@ -313,8 +360,9 @@ func ExampleStmt() {
 	id := 43
 	var username string
 	err = stmt.QueryRowContext(ctx, id).Scan(&username)
+
 	switch {
-	case err == sql.ErrNoRows:
+	case err == sql.ErrNoRows: // 数据不存在
 		log.Fatalf("no user with id %d", id)
 	case err != nil:
 		log.Fatal(err)
@@ -323,6 +371,7 @@ func ExampleStmt() {
 	}
 }
 
+// 查询单条数据
 func ExampleStmt_QueryRowContext() {
 	// In normal use, create one Stmt when your process starts.
 	stmt, err := db.PrepareContext(ctx, "SELECT username FROM users WHERE id = ?")
@@ -345,25 +394,37 @@ func ExampleStmt_QueryRowContext() {
 	}
 }
 
+// 查询多行数据
 func ExampleRows() {
 	age := 27
 	rows, err := db.QueryContext(ctx, "SELECT name FROM users WHERE age=?", age)
 	if err != nil {
 		log.Fatal(err)
 	}
+	// 记得关闭
 	defer rows.Close()
 
+	// 存储结果集
 	names := make([]string, 0)
+
+	// 判断是否还有下一条数据
 	for rows.Next() {
 		var name string
+
+		// 提取数据
 		if err := rows.Scan(&name); err != nil {
 			log.Fatal(err)
 		}
+
+		// 数据追加到结果集
 		names = append(names, name)
 	}
+
 	// Check for errors from iterating over rows.
+	// 检查 迭代每条数据的 错误
 	if err := rows.Err(); err != nil {
 		log.Fatal(err)
 	}
+
 	log.Printf("%s are %d years old", strings.Join(names, ", "), age)
 }

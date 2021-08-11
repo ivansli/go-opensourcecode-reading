@@ -78,7 +78,12 @@ func Query(ctx context.Context, id int64) {
 	defer cancel()
 
 	var name string
-	err := pool.QueryRowContext(ctx, "select p.name from people as p where p.id = :id;", sql.Named("id", id)).Scan(&name)
+
+	// TODO (study sql.Named)
+	err := pool.QueryRowContext(ctx, "select p.name from people as p where p.id = :id;",
+		sql.Named("id", id), // sql 语句中的参数
+	).Scan(&name) // 扫描 提取数据
+
 	if err != nil {
 		log.Fatal("unable to execute search query", err)
 	}

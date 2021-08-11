@@ -109,6 +109,9 @@ func newCCResolverWrapper(cc *ClientConn, rb resolver.Builder) (*ccResolverWrapp
 	// 获取地址列表之后，一般做2件事：
 	// 1.调用 ccResolverWrapper 的 UpdateState 方法(当前文件中) 更新服务端地址到负载均衡器中
 	// 2.可能开启新的协程监听 cc.parsedTarget 背后的服务端地址变化，变化后再次调用 UpdateState
+
+	// 注意：如果  rb.Build 是创建一个新的 goroutine 异步建立连接的话
+	// 调用 rb.Build 方法会立即返回。但是连接的建立过程是在其他 goroutine 中进行的
 	ccr.resolver, err = rb.Build(cc.parsedTarget, ccr, rbo)
 
 	if err != nil {
@@ -140,6 +143,7 @@ func (ccr *ccResolverWrapper) close() {
 // TODO (read code)
 //  更新状态，包含建立连接的逻辑
 //  s resolver.State : 为解析器解析出来的所有服务端可用地址
+// 该方法对于有些 名称解析器来说，说通过创建新的 goroutine 来异步进行调用的
 func (ccr *ccResolverWrapper) UpdateState(s resolver.State) error {
 	// 加锁，因为可能会有多个协程调用此方法进行更新
 	//

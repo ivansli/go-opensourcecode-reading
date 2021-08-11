@@ -50,9 +50,12 @@ func (bb *baseBuilder) Build(cc balancer.ClientConn, opt balancer.BuildOptions) 
 		csEvltr:  &balancer.ConnectivityStateEvaluator{},
 		config:   bb.config,
 	}
+
 	// Initialize picker to a picker that always returns
 	// ErrNoSubConnAvailable, because when state of a SubConn changes, we
 	// may call UpdateState with this picker.
+	// 初始化一个永远返回 ErrNoSubConnAvailable 错误的 picker
+	// 因为 当 SubConn 的状态变化时，我们应该调用 UpdateState 取更新 picker
 	bal.picker = NewErrPicker(balancer.ErrNoSubConnAvailable)
 
 	return bal
@@ -76,6 +79,7 @@ type baseBalancer struct {
 	// }
 	pickerBuilder PickerBuilder
 
+	// 记录 [当前 负载均衡器下] 多个 subcons 的 就绪连接、 连接中 的个数
 	csEvltr *balancer.ConnectivityStateEvaluator
 	state   connectivity.State
 
@@ -106,7 +110,10 @@ func (b *baseBalancer) ResolverError(err error) {
 		return
 	}
 
+	// 生成负载均衡器的选择器
 	b.regeneratePicker()
+
+	// ！！！更新
 	b.cc.UpdateState(balancer.State{
 		ConnectivityState: b.state,
 		Picker:            b.picker,
@@ -190,6 +197,7 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 			// 		即：balancer_conn_wrappers.go 中 ccBalancerWrapper 结构体
 
 			// sc 为 balancer_conn_wrappers.go 中 addrConn 对象的 包装对象 acBalancerWrapper
+			// acBalancerWrapper
 			sc, err := b.cc.NewSubConn([]resolver.Address{a}, balancer.NewSubConnOptions{HealthCheckEnabled: b.config.HealthCheck})
 			if err != nil {
 				logger.Warningf("base.baseBalancer: failed to create new SubConn: %v", err)
@@ -209,6 +217,7 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 			// 调用 acBalancerWrapper 的 Connect 方法， 即 最终是 addrConn 的 conn 方法
 
 			// addrConn 对应的连接状态 一直由一个新的协程来维持
+			// acBalancerWrapper.Connect
 			sc.Connect()
 		} else {
 			// aNoAttrs上建立连接，则进行更新
@@ -223,6 +232,12 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 			// 如果属性发生变化，总是更新子 subconn 的地址。
 			// SubConn 执行一个反射。新地址和旧地址的深度相等。
 			// 因此，如果当前地址与旧地址相同(包括属性)，那么这就是一个noop。
+
+			// type subConnInfo struct {
+			//    subConn balancer.SubConn
+			//    attrs   *attributes.Attributes
+			// }
+			// scInfo 结构体中 subConn 即 ac 的包装对象
 			scInfo.attrs = a.Attributes
 			b.subConns[aNoAttrs] = scInfo
 
@@ -236,8 +251,10 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 			//    ResolveNow(resolver.ResolveNowOptions)
 			//    Target() string
 			// }
-			//
+
 			// b.cc 为  balancer_conn_wrappers.go 中 ccBalancerWrapper 结构体
+
+			// 更新地址 包括根据 检查 ac 状态以及 地址，来进行 ac 销毁 或者 重新创建 ac
 			b.cc.UpdateAddresses(scInfo.subConn, []resolver.Address{a})
 		}
 	}
@@ -245,9 +262,13 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 	// ！！！！
 	// b.subConns 可能存在 就得已经下掉的地址，所以这里进行判断
 	// 如果 地址已经下掉，则 从 b.subConns 中移除
+	//
+	// 假设 某台通过 etcd 注册的服务端下线了，这个时候 名称解析器会重新解析 并更新地址
+	// 更新的时候调用这里 发现已经下线的服务端地址，则会移除
 	for a, scInfo := range b.subConns {
 		// a was removed by resolver.
 		if _, ok := addrsSet[a]; !ok {
+			// scInfo.subConn 即 acBalancerWrapper
 			b.cc.RemoveSubConn(scInfo.subConn)
 			delete(b.subConns, a)
 			// Keep the state of this sc in b.scStates until sc's state becomes Shutdown.
@@ -266,9 +287,11 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 	// 如果解析器状态不包含地址(没有可用地址)，返回一个错误，因此ClientConn将触发重新解析
 	// 还将此记录为解析器错误，因此当整体状态变为瞬态失败时，错误消息将具有零地址信息
 	if len(s.ResolverState.Addresses) == 0 {
+		// ！！
 		b.ResolverError(errors.New("produced zero addresses"))
 		return balancer.ErrBadResolverState
 	}
+
 	return nil
 }
 
@@ -290,6 +313,8 @@ func (b *baseBalancer) mergeErrors() error {
 // from it. The picker is
 //  - errPicker if the balancer is in TransientFailure,
 //  - built by the pickerBuilder with all READY SubConns otherwise.
+//
+// 生成负载均衡器 的选择器
 func (b *baseBalancer) regeneratePicker() {
 	if b.state == connectivity.TransientFailure {
 		b.picker = NewErrPicker(b.mergeErrors())
@@ -306,14 +331,17 @@ func (b *baseBalancer) regeneratePicker() {
 		}
 	}
 
+	// 生成 负载均衡器 的 选择器
 	b.picker = b.pickerBuilder.Build(PickerBuildInfo{ReadySCs: readySCs})
 }
 
 func (b *baseBalancer) UpdateSubConnState(sc balancer.SubConn, state balancer.SubConnState) {
 	s := state.ConnectivityState
+
 	if logger.V(2) {
 		logger.Infof("base.baseBalancer: handle SubConn state change: %p, %v", sc, s)
 	}
+
 	oldS, ok := b.scStates[sc]
 	if !ok {
 		if logger.V(2) {
@@ -321,20 +349,25 @@ func (b *baseBalancer) UpdateSubConnState(sc balancer.SubConn, state balancer.Su
 		}
 		return
 	}
+
 	if oldS == connectivity.TransientFailure && s == connectivity.Connecting {
 		// Once a subconn enters TRANSIENT_FAILURE, ignore subsequent
 		// CONNECTING transitions to prevent the aggregated state from being
 		// always CONNECTING when many backends exist but are all down.
 		return
 	}
+
 	b.scStates[sc] = s
+
 	switch s {
 	case connectivity.Idle:
 		sc.Connect()
+
 	case connectivity.Shutdown:
 		// When an address was removed by resolver, b called RemoveSubConn but
 		// kept the sc's state in scStates. Remove state for this sc here.
 		delete(b.scStates, sc)
+
 	case connectivity.TransientFailure:
 		// Save error to be reported via picker.
 		b.connErr = state.ConnectionError
@@ -346,11 +379,18 @@ func (b *baseBalancer) UpdateSubConnState(sc balancer.SubConn, state balancer.Su
 	//  - this sc entered or left ready
 	//  - the aggregated state of balancer is TransientFailure
 	//    (may need to update error message)
+
+	// 当发生以下情况之一时重新生成选择器:
+	// - 这个sc输入 或 准备好了 ？？
+	// - 平衡器的聚合状态是TransientFailure
+	// 需要更新错误信息
 	if (s == connectivity.Ready) != (oldS == connectivity.Ready) ||
 		b.state == connectivity.TransientFailure {
 		b.regeneratePicker()
 	}
 
+	// TODO （read code）
+	// 更新 picker
 	b.cc.UpdateState(balancer.State{ConnectivityState: b.state, Picker: b.picker})
 }
 
@@ -360,7 +400,7 @@ func (b *baseBalancer) Close() {
 }
 
 // NewErrPicker returns a Picker that always returns err on Pick().
-// NewErrPicker 返回的Picker总是在Pick()上返回err
+// NewErrPicker 返回的 Picker 总是在 Pick() 上返回err
 func NewErrPicker(err error) balancer.Picker {
 	return &errPicker{err: err}
 }

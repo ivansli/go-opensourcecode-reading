@@ -60,13 +60,19 @@ func newCCBalancerWrapper(cc *ClientConn, b balancer.Builder, bopts balancer.Bui
 		closed:   grpcsync.NewEvent(),
 		done:     grpcsync.NewEvent(),
 
-		// 注意 acBalancerWrapper 结构体
+		// TODO
+		//  注意 acBalancerWrapper 结构体
 		subConns: make(map[*acBalancerWrapper]struct{}),
 	}
 
-	// todo（追源码，学习）
-	// 使用另一个协程 来 监听变化 负载均衡器的地址变化
-	// 发生变化，则进行更新
+	// 异步监听 ccb 的地址信息变化，然后处理
+	// 主要是监听在 updateCh 的 chan 上
+	//
+	// 变化包括（ 在 b.Build(ccb, bopts) 中也有对用变化 ）：
+	// ccb.RemoveSubConn()  移除 addconn
+	// ccb.handleSubConnStateChange() 更新状态  等
+	// TODO（追源码，学习）
+	// 在 监听变化时 会根据消息类型 来选择 picker
 	go ccb.watcher()
 
 	// 使用 负载均衡构建器 来创建一个 负载均衡器
@@ -87,21 +93,27 @@ func (ccb *ccBalancerWrapper) watcher() {
 		select {
 		// 监听 负载均衡的更新通道 updateCh
 		case t := <-ccb.updateCh.Get():
-			// 载入 backlog 中的数据
+			// 载入 backlog 中违背消费的数据
 			ccb.updateCh.Load()
 
+			// ccb 被关闭
+			// 则退出对该 ccb 的事件监听
 			if ccb.closed.HasFired() {
 				break
 			}
 
 			switch u := t.(type) {
-			case *scStateUpdate:
+			case *scStateUpdate: // 更新状态
 				ccb.balancerMu.Lock()
-				// 更新连接信息信息
+
+				// TODO （read code）
+				//  更新连接信息
+				//  同时更新 clientconn 对象中的 负载均衡器的选择器 picker
 				ccb.balancer.UpdateSubConnState(u.sc, balancer.SubConnState{ConnectivityState: u.state, ConnectionError: u.err})
+
 				ccb.balancerMu.Unlock()
 
-			case *acBalancerWrapper:
+			case *acBalancerWrapper: // 移除 addrconn
 				ccb.mu.Lock()
 				if ccb.subConns != nil {
 					delete(ccb.subConns, u)
@@ -120,12 +132,16 @@ func (ccb *ccBalancerWrapper) watcher() {
 		// ccb 已经关闭
 		if ccb.closed.HasFired() {
 			ccb.balancerMu.Lock()
+
 			ccb.balancer.Close() // 关闭 balancer
+
 			ccb.balancerMu.Unlock()
 
 			ccb.mu.Lock()
+
 			scs := ccb.subConns
 			ccb.subConns = nil
+
 			ccb.mu.Unlock()
 
 			ccb.UpdateState(balancer.State{ConnectivityState: connectivity.Connecting, Picker: nil})
@@ -160,6 +176,9 @@ func (ccb *ccBalancerWrapper) handleSubConnStateChange(sc balancer.SubConn, s co
 		return
 	}
 
+	// 更新 状态
+	// 由 func (ccb *ccBalancerWrapper) watcher() 来消费消息
+	// 这里会更新 picker
 	ccb.updateCh.Put(&scStateUpdate{
 		sc:    sc,
 		state: s,
@@ -193,7 +212,9 @@ func (ccb *ccBalancerWrapper) updateClientConnState(ccs *balancer.ClientConnStat
 
 func (ccb *ccBalancerWrapper) resolverError(err error) {
 	ccb.balancerMu.Lock()
+
 	ccb.balancer.ResolverError(err)
+
 	ccb.balancerMu.Unlock()
 }
 
@@ -238,30 +259,39 @@ func (ccb *ccBalancerWrapper) RemoveSubConn(sc balancer.SubConn) {
 	// The RemoveSubConn() is handled in the run() goroutine, to avoid deadlock
 	// during switchBalancer() if the old balancer calls RemoveSubConn() in its
 	// Close().
+
+	// 由 func (ccb *ccBalancerWrapper) watcher() 来消费消息
 	ccb.updateCh.Put(sc)
 }
 
 // 更新 地址信息 addrs 到 balancer.SubConn 中
 func (ccb *ccBalancerWrapper) UpdateAddresses(sc balancer.SubConn, addrs []resolver.Address) {
+	// 检查 sc 是否是 ac 的包装对象
 	acbw, ok := sc.(*acBalancerWrapper)
 	if !ok {
 		return
 	}
 
+	// 根据状态
+	// 销毁旧的 ac 、创建新的 ac
 	acbw.UpdateAddresses(addrs)
 }
 
+// 更新 负载均衡器的选择器
 func (ccb *ccBalancerWrapper) UpdateState(s balancer.State) {
 	ccb.mu.Lock()
 	defer ccb.mu.Unlock()
 	if ccb.subConns == nil {
 		return
 	}
+
 	// Update picker before updating state.  Even though the ordering here does
 	// not matter, it can lead to multiple calls of Pick in the common start-up
 	// case where we wait for ready and then perform an RPC.  If the picker is
 	// updated later, we could call the "connecting" picker when the state is
 	// updated, and then call the "ready" picker after the picker gets updated.
+
+	// 更新 负载均衡器的选择器
 	ccb.cc.blockingpicker.updatePicker(s.Picker)
 	ccb.cc.csMgr.updateState(s.ConnectivityState)
 }
@@ -283,19 +313,30 @@ type acBalancerWrapper struct {
 	ac *addrConn
 }
 
+// TODO （read code）
+// 更新 ac
+// 1. 销毁旧的 ac
+// 2. 创建新的 ac
 func (acbw *acBalancerWrapper) UpdateAddresses(addrs []resolver.Address) {
 	acbw.mu.Lock()
 	defer acbw.mu.Unlock()
 
 	if len(addrs) <= 0 {
+		// acbw.ac 即 addrconn
+		// 由于 addrs 为空，所以需要移除 ac 并销毁
 		acbw.ac.cc.removeAddrConn(acbw.ac, errConnDrain)
 		return
 	}
 
 	// TODO (追源码)
-	// 尝试更新地址
+	// 尝试更新 addrconn 的地址
+	//
+	// 如果 ac 的地址是连接中 或 就绪的地址不在 addrs 列表中，则进入下面逻辑
 	if !acbw.ac.tryUpdateAddrs(addrs) {
+		// cc 即 grpc.ClientConn
 		cc := acbw.ac.cc
+
+		// subconn options
 		opts := acbw.ac.scopts
 		acbw.ac.mu.Lock()
 
@@ -307,6 +348,8 @@ func (acbw *acBalancerWrapper) UpdateAddresses(addrs []resolver.Address) {
 		acbw.ac.acbw = nil
 		acbw.ac.mu.Unlock()
 		acState := acbw.ac.getState()
+
+		// 从 clientconn 移除 ac 并同时销毁旧的 ac
 		acbw.ac.cc.removeAddrConn(acbw.ac, errConnDrain)
 
 		if acState == connectivity.Shutdown {
